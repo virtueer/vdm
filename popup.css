@@ -1,0 +1,159 @@
+body {
+    width: 350px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #f5f5f5;
+}
+
+.header {
+    background-color: #1a73e8;
+    color: white;
+    padding: 10px 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.header h2 {
+    margin: 0;
+    font-size: 16px;
+}
+
+#video-list {
+    padding: 10px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.video-item {
+    background-color: white;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    word-break: break-all;
+}
+
+.video-url {
+    font-size: 13px;
+    color: #333;
+    margin-bottom: 8px;
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.video-meta {
+    font-size: 11px;
+    color: #666;
+    margin-bottom: 10px;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+button {
+    flex: 1;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: background-color 0.2s;
+}
+
+.btn-download {
+    background-color: #1a73e8;
+    color: white;
+}
+
+.btn-download:hover {
+    background-color: #1557b0;
+}
+
+.btn-copy {
+    background-color: #e8eaed;
+    color: #202124;
+}
+
+.btn-copy:hover {
+    background-color: #d5d9df;
+}
+
+.empty {
+    text-align: center;
+    color: #666;
+    padding: 20px;
+    font-size: 14px;
+}
+
+.btn-preview {
+    background-color: #34a853;
+    color: white;
+}
+
+.btn-preview:hover {
+    background-color: #2d9047;
+}
+
+.btn-delete {
+    background-color: #ea4335;
+    color: white;
+}
+
+.btn-delete:hover {
+    background-color: #d33426;
+}
+
+/* Modal styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 100;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+}
+
+.modal-content {
+    margin: 30px auto;
+    padding: 15px;
+    width: 85%;
+    background-color: #fff;
+    border-radius: 8px;
+    position: relative;
+}
+
+.modal-content.resizable {
+    resize: both;
+    overflow: auto;
+    width: 700px;
+    max-width: 95%;
+    height: 450px;
+    max-height: 90vh;
+}
+
+.close-btn {
+    position: absolute;
+    right: 15px;
+    top: 5px;
+    color: #333;
+    font-size: 24px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+#player-container {
+    margin-top: 20px;
+    width: 100%;
+}
+
+#player-container video {
+    width: 100%;
+    border-radius: 4px;
+}

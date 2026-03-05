@@ -1,0 +1,34 @@
+{
+    "manifest_version": 3,
+    "name": "Video Link Finder",
+    "version": "1.0",
+    "description": "Otomatik olarak web sayfalarındaki video linklerini (m3u8, mp4 vb.) tespit eder.",
+    "permissions": [
+        "webRequest",
+        "storage",
+        "activeTab",
+        "downloads",
+        "tabs"
+    ],
+    "host_permissions": [
+        "<all_urls>"
+    ],
+    "background": {
+        "service_worker": "background.js"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "<all_urls>"
+            ],
+            "js": [
+                "content.js"
+            ],
+            "all_frames": true
+        }
+    ],
+    "action": {
+        "default_popup": "popup.html",
+        "default_title": "Video Links"
+    }
+}

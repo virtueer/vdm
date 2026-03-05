@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <link rel="stylesheet" href="popup.css">
+</head>
+
+<body>
+    <div class="header">
+        <h2>Bulunan Videolar</h2>
+    </div>
+    <div id="video-list">
+        <div class="empty">Video bulunamadı.</div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div id="preview-modal" class="modal">
+        <div class="modal-content resizable">
+            <span class="close-btn">&times;</span>
+            <div id="player-container"></div>
+        </div>
+    </div>
+
+    <!-- Info Modal -->
+    <div id="info-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-info-btn close-btn">&times;</span>
+            <div style="padding: 10px;">
+                <h3 style="margin-top:0;">m3u8 İndirme Bilgisi</h3>
+                <p style="font-size:13px;">Bu bir (.m3u8) canlı yayın veya video parçası dosyasıdır. Chrome bunu
+                    doğrudan indiremez.</p>
+                <p style="font-size:13px;">Lütfen aşağıdaki linki kopyalayıp <b>FFmpeg, VLC Player</b> veya
+                    <b>IDM/XDM</b> gibi bir araçla indirin.</p>
+                <textarea id="m3u8-link-text" readonly
+                    style="width: 100%; height: 60px; margin-bottom: 10px; padding: 5px; box-sizing: border-box;"></textarea>
+                <div class="action-buttons">
+                    <button id="copy-m3u8-btn" class="btn-copy">Linki Kopyala</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+
+</html>
