@@ -1,3 +1,6 @@
+- **Canlı ve Parçalı Yayınları İndirme Desteği:** m3u8 gibi özel yayın akışlarını **yt-dlp** ve hızlandırıcı olarak **aria2** kullanarak indirme kodunu otomatik oluşturur.
+
+
 # Video Link Finder Extension
 
 Bu eklenti, XDM (Xtreme Download Manager) benzeri bir mantıkla çalışarak ziyaret ettiğiniz web sayfalarındaki video bağlantılarını otomatik olarak tespit eder. Ağ isteklerini (Network tabanlı m3u8, mp4 vb.) ve sayfa içindeki (DOM tabanlı HTML5 `<video>`) etiketleri tarar.

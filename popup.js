@@ -56,15 +56,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Add click handlers
                 document.querySelectorAll('.btn-download').forEach(btn => {
-                    btn.addEventListener('click', (e) => {
+                    btn.addEventListener('click', async (e) => {
                         const url = e.target.getAttribute('data-url');
-                        if (url.includes('.m3u8')) {
-                            const infoModal = document.getElementById('info-modal');
-                            const linkText = document.getElementById('m3u8-link-text');
-                            linkText.value = `yt-dlp "${url}"`;
-                            infoModal.style.display = 'block';
-                        } else {
-                            chrome.downloads.download({ url: url });
+                        const command = `yt-dlp "${url}" --downloader aria2c --downloader-args "aria2c:-x 16 -s 16 -k 1M --file-allocation=none"`;
+
+                        try {
+                            // Modern Clipboard API ile yt-dlp kodunu kopyalama işlemi
+                            await navigator.clipboard.writeText(command);
+
+                            // Buton metnini güncelleme
+                            const originalText = e.target.innerText;
+                            e.target.innerText = 'Kod Kopyalandı!';
+
+                            setTimeout(() => {
+                                e.target.innerText = originalText;
+                            }, 1500);
+                        } catch (err) {
+                            console.error('Kopyalama başarısız oldu: ', err);
+                            alert('Kopyalama işlemi desteklenmiyor veya engellendi.');
                         }
                     });
                 });
