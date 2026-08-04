@@ -16,8 +16,19 @@ import * as $models from "./models.js";
 /**
  * AddDownload is called by the server.go when a new download request arrives
  */
-export function AddDownload(url: string, typ: string, size: string): $CancellablePromise<void> {
-    return $Call.ByID(421089748, url, typ, size);
+export function AddDownload(url: string, typ: string, size: string, pageUrl: string): $CancellablePromise<void> {
+    return $Call.ByID(421089748, url, typ, size, pageUrl);
+}
+
+/**
+ * CancelDownload kills the process associated with the given download ID
+ */
+export function CancelDownload(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2532515671, id);
+}
+
+export function GetConfig(): $CancellablePromise<$models.AppConfig> {
+    return $Call.ByID(1200034045);
 }
 
 /**
@@ -27,12 +38,24 @@ export function GetDownloads(): $CancellablePromise<$models.DownloadItem[] | nul
     return $Call.ByID(3093261880);
 }
 
+export function Logf(format: string, ...args: any[]): $CancellablePromise<void> {
+    return $Call.ByID(4095215453, format, args);
+}
+
+export function SaveConfig(config: $models.AppConfig): $CancellablePromise<void> {
+    return $Call.ByID(3442292638, config);
+}
+
 export function SetWailsApp(wailsApp: application$0.App | null): $CancellablePromise<void> {
     return $Call.ByID(543693278, wailsApp);
 }
 
-export function StartDownloadProcess(id: string, url: string): $CancellablePromise<void> {
-    return $Call.ByID(377378744, id, url);
+export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePromise<void> {
+    return $Call.ByID(3654517795, w);
+}
+
+export function StartDownloadProcess(id: string, downloadUrl: string): $CancellablePromise<void> {
+    return $Call.ByID(377378744, id, downloadUrl);
 }
 
 export function StartServer(): $CancellablePromise<void> {

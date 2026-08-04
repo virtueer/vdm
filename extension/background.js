@@ -70,22 +70,25 @@ chrome.webRequest.onHeadersReceived.addListener(
 
             // Avoid duplicates
             if (!videoLinks[tabId].find(v => v.url === details.url)) {
-                const newLink = {
-                    url: details.url,
-                    type: details.type || 'network',
-                    mimeType: mimeType,
-                    size: size,
-                    timestamp: Date.now()
-                };
-                videoLinks[tabId].push(newLink);
-                
-                saveLinks();
+                chrome.tabs.get(tabId, (tab) => {
+                    const pageUrl = tab ? tab.url : (details.initiator || '');
+                    const newLink = {
+                        url: details.url,
+                        type: details.type || 'network',
+                        mimeType: mimeType,
+                        size: size,
+                        timestamp: Date.now(),
+                        pageUrl: pageUrl
+                    };
+                    videoLinks[tabId].push(newLink);
+                    
+                    saveLinks();
 
-                // Update badge
-                chrome.action.setBadgeText({ text: videoLinks[tabId].length.toString(), tabId: tabId });
-                chrome.action.setBadgeBackgroundColor({ color: '#FF0000', tabId: tabId });
-                
-                // Parse HLS manifest for resolution, bandwidth, and estimate full size
+                    // Update badge
+                    chrome.action.setBadgeText({ text: videoLinks[tabId].length.toString(), tabId: tabId });
+                    chrome.action.setBadgeBackgroundColor({ color: '#FF0000', tabId: tabId });
+                    
+                    // Parse HLS manifest for resolution, bandwidth, and estimate full size
                 const isM3u8 = details.url.includes('.m3u8') || details.url.includes('master.txt') || details.responseHeaders.some(h => h.name.toLowerCase() === 'content-type' && h.value.toLowerCase().includes('mpegurl'));
                 
                 if (isM3u8) {
@@ -167,6 +170,7 @@ chrome.webRequest.onHeadersReceived.addListener(
                         }
                     })();
                 }
+                });
             }
         }
     },

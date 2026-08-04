@@ -1,69 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
-    <link rel="stylesheet" href="/style.css"/>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <title>VDM Downloader</title>
+    <title>VDM Desktop</title>
 </head>
 <body>
-<div class="bg-gradient"></div>
-<div class="glass-container">
-    <header class="app-header">
-        <div class="logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-            <h1>VDM <span class="accent">Desktop</span></h1>
-        </div>
-        <div class="header-actions">
-            <span class="status-badge pulse">
-                <span class="dot"></span>
-                <span id="connection-status">Extension Connected</span>
-            </span>
-        </div>
-    </header>
-
-    <main class="content">
-        <div class="section-title">
-            <h2>Downloads</h2>
-            <p>Videos sent from the extension are automatically listed here.</p>
-        </div>
-
-        <div id="downloads-list" class="downloads-list">
-            <!-- Items will be injected here via JS -->
-            <div class="empty-state" id="empty-state">
-                <div class="empty-icon">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
-                </div>
-                <h3>No videos yet</h3>
-                <p>When you open a video in the browser, it will appear here.</p>
-            </div>
-        </div>
-    </main>
-</div>
-
-<!-- Template for Download Item -->
-<template id="download-item-template">
-    <div class="download-item glass-card">
-        <div class="item-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect><line x1="7" y1="2" x2="7" y2="22"></line><line x1="17" y1="2" x2="17" y2="22"></line><line x1="2" y1="12" x2="22" y2="12"></line><line x1="2" y1="7" x2="7" y2="7"></line><line x1="2" y1="17" x2="7" y2="17"></line><line x1="17" y1="17" x2="22" y2="17"></line><line x1="17" y1="7" x2="22" y2="7"></line></svg>
-        </div>
-        <div class="item-info">
-            <h4 class="item-title">Video.mp4</h4>
-            <div class="item-meta">
-                <span class="meta-tag type-tag">m3u8</span>
-                <span class="meta-tag size-tag">Unknown</span>
-            </div>
-        </div>
-        <div class="item-status">
-            <span class="status-text">Pending</span>
-            <div class="progress-bar-container">
-                <div class="progress-bar" style="width: 0%"></div>
-            </div>
-        </div>
-    </div>
-</template>
-
-<script type="module" src="/src/main.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
 </body>
 </html>

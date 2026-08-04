@@ -13,6 +13,7 @@ export interface VideoLink {
   mimeType?: string;
   timestamp?: number;
   hidden?: boolean;
+  pageUrl?: string;
 }
 
 export default function App() {
@@ -137,7 +138,8 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
           body: JSON.stringify({
               url: video.url,
               type: video.type || 'network',
-              size: video.size || 'Unknown'
+              size: video.size || 'Unknown',
+              pageUrl: video.pageUrl || ''
           })
       });
 

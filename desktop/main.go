@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
@@ -30,12 +31,18 @@ func main() {
 	myApp.SetWailsApp(app)
 	myApp.StartServer()
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		go CheckAndResolveDependencies(app)
+	})
+
+	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:  "VDM Video Downloader",
 		Width:  1000,
 		Height: 618,
 		URL:    "/",
 	})
+	
+	myApp.SetWindow(window)
 
 	err := app.Run()
 	if err != nil {

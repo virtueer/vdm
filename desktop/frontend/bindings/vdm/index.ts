@@ -7,5 +7,6 @@ export {
 };
 
 export type {
+    AppConfig,
     DownloadItem
 } from "./models.js";
