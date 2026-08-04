@@ -28,7 +28,7 @@
         }
     ],
     "action": {
-        "default_popup": "popup.html",
+        "default_popup": "popup-dist/index.html",
         "default_title": "Video Links"
     }
 }
