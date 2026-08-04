@@ -157,3 +157,71 @@ button {
     width: 100%;
     border-radius: 4px;
 }
+
+.btn-hide {
+    background-color: #fbbc04;
+    color: #202124;
+}
+
+.btn-hide:hover {
+    background-color: #f2a500;
+}
+
+.video-item.hidden-state {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background-color: #f8f9fa;
+    border: 1px dashed #ccc;
+    box-shadow: none;
+    border-radius: 6px;
+    margin-bottom: 10px;
+}
+
+.hidden-state-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.hidden-state-info svg {
+    width: 16px;
+    height: 16px;
+    fill: #999;
+}
+
+.hidden-state span {
+    font-size: 13px;
+    color: #888;
+    font-style: italic;
+}
+
+.btn-show {
+    background-color: transparent;
+    color: #1a73e8;
+    border: 1px solid #1a73e8;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.btn-show:hover {
+    background-color: #e8f0fe;
+}
+
+.btn-copy-icon {
+    background: none;
+    border: none;
+    font-size: 16px;
+    padding: 2px;
+    cursor: pointer;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-copy-icon:hover {
+    background-color: #f1f3f4;
+}

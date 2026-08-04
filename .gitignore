@@ -1,0 +1,21 @@
+# Desktop (Go / Wails)
+desktop/build/
+desktop/bin/
+desktop/frontend/node_modules/
+desktop/frontend/dist/
+*.exe
+*.app
+*.dmg
+*.AppImage
+
+# Go
+*.test
+*.prof
+
+# MacOS
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+*.swp

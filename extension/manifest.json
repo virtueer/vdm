@@ -1,8 +1,8 @@
 {
     "manifest_version": 3,
-    "name": "Video Link Finder",
+    "name": "VDM Extension",
     "version": "1.0",
-    "description": "Otomatik olarak web sayfalarındaki video linklerini (m3u8, mp4 vb.) tespit eder.",
+    "description": "Automatically detects video links (m3u8, mp4, etc.) on web pages.",
     "permissions": [
         "webRequest",
         "storage",
