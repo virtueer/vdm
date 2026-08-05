@@ -70,15 +70,37 @@ chrome.webRequest.onHeadersReceived.addListener(
 
             // Avoid duplicates
             if (!videoLinks[tabId].find(v => v.url === details.url)) {
-                chrome.tabs.get(tabId, (tab) => {
-                    const pageUrl = tab ? tab.url : (details.initiator || '');
+                const pageUrl = details.initiator || '';
+
+                const finalizeLink = (pageTitle) => {
+                    // Fallback to extract from URL if title is empty
+                    if (!pageTitle || pageTitle.trim() === '' || pageTitle.toLowerCase() === 'video' || pageTitle === 'Player') {
+                        try {
+                            const u = new URL(pageUrl);
+                            const path = u.pathname.replace(/^\/+|\/+$/g, '');
+                            if (path) {
+                                const parts = path.split('/');
+                                if (parts.length > 1) {
+                                    pageTitle = parts.slice(-2).join('-');
+                                } else {
+                                    pageTitle = parts[parts.length - 1];
+                                }
+                            } else {
+                                pageTitle = u.hostname;
+                            }
+                        } catch(e) {
+                            pageTitle = 'Video';
+                        }
+                    }
+                    
                     const newLink = {
                         url: details.url,
                         type: details.type || 'network',
                         mimeType: mimeType,
                         size: size,
                         timestamp: Date.now(),
-                        pageUrl: pageUrl
+                        pageUrl: pageUrl,
+                        title: pageTitle
                     };
                     videoLinks[tabId].push(newLink);
                     
@@ -89,87 +111,120 @@ chrome.webRequest.onHeadersReceived.addListener(
                     chrome.action.setBadgeBackgroundColor({ color: '#FF0000', tabId: tabId });
                     
                     // Parse HLS manifest for resolution, bandwidth, and estimate full size
-                const isM3u8 = details.url.includes('.m3u8') || details.url.includes('master.txt') || details.responseHeaders.some(h => h.name.toLowerCase() === 'content-type' && h.value.toLowerCase().includes('mpegurl'));
-                
-                if (isM3u8) {
-                    (async () => {
-                        try {
-                            const res = await fetch(details.url);
-                            const text = await res.text();
-                            
-                            let maxBandwidth = 0;
-                            let maxRes = "";
-                            let bestStreamUri = "";
-                            
-                            const lines = text.split('\n');
-                            let currentBandwidth = 0;
-                            let currentRes = "";
-                            
-                            for (let i = 0; i < lines.length; i++) {
-                                let line = lines[i].trim();
-                                if (line.startsWith('#EXT-X-STREAM-INF:')) {
-                                    const bwMatch = line.match(/BANDWIDTH=(\d+)/i);
-                                    const resMatch = line.match(/RESOLUTION=(\d+x\d+)/i);
-                                    
-                                    currentBandwidth = bwMatch ? parseInt(bwMatch[1], 10) : 0;
-                                    currentRes = resMatch ? resMatch[1] : "";
-                                } else if (line && !line.startsWith('#')) {
-                                    if (currentBandwidth > maxBandwidth) {
-                                        maxBandwidth = currentBandwidth;
-                                        maxRes = currentRes;
-                                        bestStreamUri = line;
-                                    }
-                                }
-                            }
-                            
-                            let updated = false;
-                            if (maxRes) {
-                                newLink.resolution = maxRes;
-                                updated = true;
-                            }
-                            if (maxBandwidth > 0) {
-                                newLink.bandwidth = (maxBandwidth / 1000000).toFixed(2) + ' Mbps';
-                                updated = true;
-                            }
-                            
-                            // If we found a stream URI, fetch it to calculate total size
-                            if (bestStreamUri && maxBandwidth > 0) {
-                                const mediaUrl = new URL(bestStreamUri, details.url).href;
-                                const mediaRes = await fetch(mediaUrl);
-                                const mediaText = await mediaRes.text();
+                    const isM3u8 = details.url.includes('.m3u8') || details.url.includes('master.txt') || details.responseHeaders.some(h => h.name.toLowerCase() === 'content-type' && h.value.toLowerCase().includes('mpegurl'));
+                    
+                    if (isM3u8) {
+                        (async () => {
+                            try {
+                                const res = await fetch(details.url);
+                                const text = await res.text();
                                 
-                                let totalDuration = 0;
-                                const mediaLines = mediaText.split('\n');
-                                for (let line of mediaLines) {
-                                    if (line.trim().startsWith('#EXTINF:')) {
-                                        const durMatch = line.match(/#EXTINF:([\d.]+)/i);
-                                        if (durMatch) {
-                                            totalDuration += parseFloat(durMatch[1]);
+                                let maxBandwidth = 0;
+                                let maxRes = "";
+                                let bestStreamUri = "";
+                                
+                                const lines = text.split('\n');
+                                let currentBandwidth = 0;
+                                let currentRes = "";
+                                
+                                for (let i = 0; i < lines.length; i++) {
+                                    let line = lines[i].trim();
+                                    if (line.startsWith('#EXT-X-STREAM-INF:')) {
+                                        const bwMatch = line.match(/BANDWIDTH=(\d+)/i);
+                                        const resMatch = line.match(/RESOLUTION=(\d+x\d+)/i);
+                                        
+                                        currentBandwidth = bwMatch ? parseInt(bwMatch[1], 10) : 0;
+                                        currentRes = resMatch ? resMatch[1] : "";
+                                    } else if (line && !line.startsWith('#')) {
+                                        if (currentBandwidth > maxBandwidth) {
+                                            maxBandwidth = currentBandwidth;
+                                            maxRes = currentRes;
+                                            bestStreamUri = line;
                                         }
                                     }
                                 }
                                 
-                                if (totalDuration > 0) {
-                                    const totalBytes = (maxBandwidth * totalDuration) / 8;
-                                    let sizeStr = "";
-                                    if (totalBytes > 1024 * 1024 * 1024) sizeStr = (totalBytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
-                                    else if (totalBytes > 1024 * 1024) sizeStr = (totalBytes / (1024 * 1024)).toFixed(2) + ' MB';
-                                    else if (totalBytes > 1024) sizeStr = (totalBytes / 1024).toFixed(2) + ' KB';
-                                    else sizeStr = totalBytes.toFixed(0) + ' B';
-                                    
-                                    newLink.size = "~" + sizeStr;
+                                let updated = false;
+                                if (maxRes) {
+                                    newLink.resolution = maxRes;
                                     updated = true;
                                 }
+                                if (maxBandwidth > 0) {
+                                    newLink.bandwidth = (maxBandwidth / 1000000).toFixed(2) + ' Mbps';
+                                    updated = true;
+                                }
+                                
+                                // If we found a stream URI, fetch it to calculate total size
+                                if (bestStreamUri && maxBandwidth > 0) {
+                                    const mediaUrl = new URL(bestStreamUri, details.url).href;
+                                    const mediaRes = await fetch(mediaUrl);
+                                    const mediaText = await mediaRes.text();
+                                    
+                                    let totalDuration = 0;
+                                    const mediaLines = mediaText.split('\n');
+                                    for (let line of mediaLines) {
+                                        if (line.trim().startsWith('#EXTINF:')) {
+                                            const durMatch = line.match(/#EXTINF:([\d.]+)/i);
+                                            if (durMatch) {
+                                                totalDuration += parseFloat(durMatch[1]);
+                                            }
+                                        }
+                                    }
+                                    
+                                    if (totalDuration > 0) {
+                                        const totalBytes = (maxBandwidth * totalDuration) / 8;
+                                        let sizeStr = "";
+                                        if (totalBytes > 1024 * 1024 * 1024) sizeStr = (totalBytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+                                        else if (totalBytes > 1024 * 1024) sizeStr = (totalBytes / (1024 * 1024)).toFixed(2) + ' MB';
+                                        else if (totalBytes > 1024) sizeStr = (totalBytes / 1024).toFixed(2) + ' KB';
+                                        else sizeStr = totalBytes.toFixed(0) + ' B';
+                                        
+                                        newLink.size = "~" + sizeStr;
+                                        updated = true;
+                                    }
+                                }
+                                
+                                if (updated) {
+                                    saveLinks();
+                                }
+                            } catch (err) {
+                                console.error("Failed to deeply parse m3u8:", err);
                             }
-                            
-                            if (updated) {
-                                saveLinks();
-                            }
-                        } catch (err) {
-                            console.error("Failed to deeply parse m3u8:", err);
+                        })();
+                    }
+                };
+
+                // Try to get title from the main frame (frameId: 0) first
+                chrome.tabs.sendMessage(tabId, { action: 'getPageTitle' }, { frameId: 0 }, (response) => {
+                    let title = '';
+                    if (!chrome.runtime.lastError && response && response.title) {
+                        title = response.title;
+                    }
+                    
+                    if (title && title.toLowerCase() !== 'video' && title !== 'Player') {
+                        finalizeLink(title);
+                    } else {
+                        // Fallback to the specific frame if it's different
+                        if (details.frameId !== undefined && details.frameId !== 0 && details.frameId !== -1) {
+                            chrome.tabs.sendMessage(tabId, { action: 'getPageTitle' }, { frameId: details.frameId }, (resp2) => {
+                                let title2 = '';
+                                if (!chrome.runtime.lastError && resp2 && resp2.title) {
+                                    title2 = resp2.title;
+                                }
+                                if (title2 && title2.toLowerCase() !== 'video' && title2 !== 'Player') {
+                                    finalizeLink(title2);
+                                } else {
+                                    chrome.tabs.get(tabId, (tab) => {
+                                        finalizeLink(tab ? tab.title : '');
+                                    });
+                                }
+                            });
+                        } else {
+                            chrome.tabs.get(tabId, (tab) => {
+                                finalizeLink(tab ? tab.title : '');
+                            });
                         }
-                    })();
-                }
+                    }
                 });
             }
         }

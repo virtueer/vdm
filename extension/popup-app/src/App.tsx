@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, EyeOff, Download, Check } from "lucide-react";
+import { Copy, EyeOff, Download, Check, Search } from "lucide-react";
 
 export interface VideoLink {
   url: string;
@@ -14,6 +14,7 @@ export interface VideoLink {
   timestamp?: number;
   hidden?: boolean;
   pageUrl?: string;
+  title?: string;
 }
 
 export default function App() {
@@ -109,6 +110,7 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
   const [copied, setCopied] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState("Download");
   const [resolution, setResolution] = useState<string | null>(video.resolution || null);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   const urlString = video.url.length > 70 ? video.url.substring(0, 70) + '...' : video.url;
   
@@ -139,7 +141,8 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
               url: video.url,
               type: video.type || 'network',
               size: video.size || 'Unknown',
-              pageUrl: video.pageUrl || ''
+              pageUrl: video.pageUrl || '',
+              title: video.title || ''
           })
       });
 
@@ -164,6 +167,55 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
     }
   };
 
+  const handleTestTitle = () => {
+    setTestResult("Testing...");
+    if (typeof chrome !== 'undefined' && chrome.tabs) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const tab = tabs[0];
+        if (tab && tab.id) {
+          
+          const runFallback = (pageTitle: string) => {
+            if (!pageTitle || pageTitle.trim() === '' || pageTitle.toLowerCase() === 'video' || pageTitle === 'Player') {
+                try {
+                    const u = new URL(video.pageUrl || tab.url || '');
+                    const path = u.pathname.replace(/^\/+|\/+$/g, '');
+                    if (path) {
+                        const parts = path.split('/');
+                        if (parts.length > 1) {
+                            pageTitle = parts.slice(-2).join('-');
+                        } else {
+                            pageTitle = parts[parts.length - 1];
+                        }
+                    } else {
+                        pageTitle = u.hostname;
+                    }
+                } catch(err) {
+                    pageTitle = 'Video';
+                }
+            }
+            setTestResult('Result: ' + pageTitle);
+          };
+
+          chrome.tabs.sendMessage(tab.id, { action: 'getPageTitle' }, { frameId: 0 }, (res) => {
+            let title = '';
+            if (!chrome.runtime.lastError && res && res.title) {
+                title = res.title;
+            }
+            if (title && title.toLowerCase() !== 'video' && title !== 'Player') {
+                runFallback(title);
+            } else {
+                chrome.tabs.get(tab.id, (t) => {
+                    runFallback(t ? t.title || '' : '');
+                });
+            }
+          });
+        }
+      });
+    } else {
+      setTestResult("Test title works only in extension.");
+    }
+  };
+
   const isM3u8 = video.url.includes('.m3u8') || video.url.includes('master.txt');
   const srcHash = isM3u8 ? '' : '#t=0.001';
 
@@ -174,10 +226,22 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
           <div className="text-xs font-medium text-foreground break-all leading-tight flex-1 line-clamp-2" title={video.url}>
             {urlString}
           </div>
-          <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 rounded-full" onClick={handleCopy} title="Copy URL">
-            {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />}
-          </Button>
+          <div className="flex gap-1">
+            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 rounded-full" onClick={handleTestTitle} title="Test Title Extraction">
+              <Search className="h-3.5 w-3.5 text-muted-foreground hover:text-orange-500" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 rounded-full" onClick={handleCopy} title="Copy URL">
+              {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />}
+            </Button>
+          </div>
         </div>
+
+        {testResult && (
+          <div className="text-[11px] font-bold text-green-600 mb-2 break-all bg-green-500/10 p-1.5 rounded-md">
+            {testResult}
+          </div>
+        )}
+
         
         <div className="text-[10px] text-muted-foreground flex flex-wrap gap-x-2 gap-y-1 mb-3">
           <span className="bg-secondary px-1.5 py-0.5 rounded text-secondary-foreground">{video.type}</span>

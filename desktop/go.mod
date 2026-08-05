@@ -2,7 +2,10 @@ module vdm
 
 go 1.25.0
 
-require github.com/wailsapp/wails/v3 v3.0.0-beta.3
+require (
+	github.com/mattn/go-sqlite3 v1.14.49
+	github.com/wailsapp/wails/v3 v3.0.0-beta.3
+)
 
 require (
 	github.com/adrg/xdg v0.5.3 // indirect

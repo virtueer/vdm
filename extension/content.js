@@ -20,6 +20,34 @@ function scanForVideos() {
     });
 }
 
+function extractBestTitle() {
+    let title = '';
+    
+    // Check for OpenGraph title which is usually the most accurate movie/series name
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle && ogTitle.content) title = ogTitle.content;
+    
+    // Check for main heading
+    if (!title || title.length < 3) {
+        const h1 = document.querySelector('h1');
+        if (h1 && h1.innerText) title = h1.innerText;
+    }
+    
+    // Fallback to document title
+    if (!title || title.length < 3) {
+        title = document.title;
+    }
+    
+    // Some sites suffix their domain to the title, optionally we could clean it here
+    return title ? title.trim() : '';
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.action === 'getPageTitle') {
+        sendResponse({ title: extractBestTitle() });
+    }
+});
+
 // Initial scan
 scanForVideos();
 

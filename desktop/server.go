@@ -11,6 +11,7 @@ type DownloadRequest struct {
 	Type    string `json:"type"`
 	Size    string `json:"size"`
 	PageURL string `json:"pageUrl"`
+	Title   string `json:"title"`
 }
 
 type Server struct {
@@ -48,7 +49,7 @@ func (s *Server) Start() {
 
 		// Pass to download manager via app
 		if s.app != nil {
-			s.app.AddDownload(req.URL, req.Type, req.Size, req.PageURL)
+			s.app.AddDownload(req.URL, req.Type, req.Size, req.PageURL, req.Title)
 		}
 
 		w.WriteHeader(http.StatusOK)

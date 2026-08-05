@@ -16,12 +16,12 @@ import * as $models from "./models.js";
 /**
  * AddDownload is called by the server.go when a new download request arrives
  */
-export function AddDownload(url: string, typ: string, size: string, pageUrl: string): $CancellablePromise<void> {
-    return $Call.ByID(421089748, url, typ, size, pageUrl);
+export function AddDownload(url: string, typ: string, size: string, pageUrl: string, title: string): $CancellablePromise<void> {
+    return $Call.ByID(421089748, url, typ, size, pageUrl, title);
 }
 
 /**
- * CancelDownload kills the process associated with the given download ID
+ * CancelDownload kills the process and deletes the downloaded files
  */
 export function CancelDownload(id: string): $CancellablePromise<void> {
     return $Call.ByID(2532515671, id);
@@ -40,6 +40,34 @@ export function GetDownloads(): $CancellablePromise<$models.DownloadItem[] | nul
 
 export function Logf(format: string, ...args: any[]): $CancellablePromise<void> {
     return $Call.ByID(4095215453, format, args);
+}
+
+/**
+ * PauseDownload kills the current download process but keeps the state so it can be resumed
+ */
+export function PauseDownload(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1028494649, id);
+}
+
+/**
+ * RemoveDownload deletes the download completely from the list and database
+ */
+export function RemoveDownload(id: string): $CancellablePromise<void> {
+    return $Call.ByID(3155670617, id);
+}
+
+/**
+ * ResumeDownload re-starts a paused download
+ */
+export function ResumeDownload(id: string): $CancellablePromise<void> {
+    return $Call.ByID(687612914, id);
+}
+
+/**
+ * RetryDownload re-starts an errored or cancelled download
+ */
+export function RetryDownload(id: string): $CancellablePromise<void> {
+    return $Call.ByID(2868588333, id);
 }
 
 export function SaveConfig(config: $models.AppConfig): $CancellablePromise<void> {

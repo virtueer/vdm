@@ -23,6 +23,21 @@ func isHLS(u string) bool {
 	return strings.Contains(u, ".m3u8") || strings.Contains(u, "master.txt") || strings.Contains(u, "m3u8")
 }
 
+func sanitizeFilename(name string) string {
+	if name == "" {
+		return ""
+	}
+	invalidChars := []string{"<", ">", ":", "\"", "/", "\\", "|", "?", "*"}
+	for _, char := range invalidChars {
+		name = strings.ReplaceAll(name, char, "_")
+	}
+	// Limit length
+	if len(name) > 100 {
+		name = name[:100]
+	}
+	return strings.TrimSpace(name)
+}
+
 func extractFilename(u string) string {
 	parsed, err := url.Parse(u)
 	if err == nil {
@@ -47,6 +62,8 @@ func getFallbackReferer(downloadUrl string) string {
 // Fixed regex: ~?\s* (multiple spaces after tilde) and allow both KiB/s and MiB/s
 var ytdlpRegex = regexp.MustCompile(`\[download\]\s+(?P<percent>[\d\.]+)%\s+of\s+~?\s*(?P<size>[\d\.]+\s*\w+)\s+at\s+(?P<speed>[\d\.]+\s*\w+/s)`)
 var aria2cRegex = regexp.MustCompile(`\[#[^\]]+\]\s+(\S+)/(\S+)\s+\((\d+)%\).*DL:(\S+)`)
+var ytDlpDestRegex = regexp.MustCompile(`\[download\] Destination: (.*)`)
+var ytDlpAlreadyDestRegex = regexp.MustCompile(`\[download\] (.*) has already been downloaded`)
 
 // isProgressLine returns true if the line contains download progress info (regex match)
 func isProgressLine(line string) bool {
@@ -90,6 +107,8 @@ func (a *App) parseProgressLine(id string, line string, lastEmitMs *int64) bool 
 	return true
 }
 
+
+
 func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 	// Update status
 	for i, item := range a.downloads {
@@ -104,11 +123,16 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 
 	go func() {
 		homeDir, _ := os.UserHomeDir()
+		downloadDir := filepath.Join(homeDir, "Downloads")
+		tempDir := filepath.Join(homeDir, ".vdm", "temp")
+		os.MkdirAll(tempDir, 0755)
 
 		var itemPageUrl string
+		var itemTitle string
 		for _, item := range a.downloads {
 			if item.ID == id {
 				itemPageUrl = item.PageURL
+				itemTitle = item.Title
 				break
 			}
 		}
@@ -132,47 +156,132 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 		var cmd *exec.Cmd
 
 		if isYouTube(downloadUrl) {
-			downloadPath := filepath.Join(homeDir, "Downloads", "%(title)s.%(ext)s")
 			aria2cPath := GetDependencyPath("aria2c")
 			threads := fmt.Sprintf("%d", GlobalConfig.ConcurrentFragments)
-			args := []string{downloadUrl, "--downloader", aria2cPath, "--downloader-args", fmt.Sprintf("aria2c:-x %s -s %s -k 1M --file-allocation=none", threads, threads), "-o", downloadPath}
+			
+			outName := "%(title)s.%(ext)s"
+			if itemTitle != "" {
+				// Even for YouTube, if we have a title, we could hint it, but yt-dlp 
+				// usually extracts a much better title. Still, let's keep %(title)s.
+				// However, if the user explicitly wants the captured title:
+				// outName = sanitizeFilename(itemTitle) + ".%(ext)s"
+				// Let's stick to yt-dlp's title for YouTube because it's reliable.
+			}
+
+			args := []string{
+				downloadUrl, 
+				"-P", "home:" + downloadDir,
+				"-P", "temp:" + tempDir,
+				"-o", outName,
+				"--downloader", aria2cPath, 
+				"--downloader-args", fmt.Sprintf("aria2c:-x %s -s %s -k 1M --file-allocation=none", threads, threads),
+				"--retry-sleep", "fragment:exp=1:20",
+				"--retry-sleep", "http:exp=1:20",
+			}
 			if itemPageUrl != "" {
 				args = append(args, "--referer", itemPageUrl)
 			}
 			cmd = exec.CommandContext(ctx, GetDependencyPath("yt-dlp"), args...)
 		} else if isHLS(downloadUrl) {
-			// For HLS, let yt-dlp determine the title via %(title)s
-			downloadPath := filepath.Join(homeDir, "Downloads", "%(title)s.%(ext)s")
+			threads := fmt.Sprintf("%d", GlobalConfig.ConcurrentFragments)
+			var outName string
+			
+			// 1. Chrome extension title (itemTitle)
+			// 2. If empty or generic, use stream filename
+			titleToUse := itemTitle
+			if titleToUse == "" || titleToUse == "Video" {
+				filename := extractFilename(downloadUrl)
+				if filename != "" && filename != "master.txt" && filename != "index.m3u8" && !strings.HasPrefix(filename, "master") {
+					titleToUse = strings.TrimSuffix(filename, filepath.Ext(filename))
+				}
+			}
+			
+			var generatedTitle string
+			if titleToUse != "" && titleToUse != "Video" {
+				generatedTitle = titleToUse
+			} else {
+				// 3. Fallback to random
+				generatedTitle = fmt.Sprintf("Video_%d", time.Now().Unix())
+			}
+			outName = sanitizeFilename(generatedTitle) + ".mp4"
+			
+			// Update the title and destination in state
+			a.mu.Lock()
+			for i, d := range a.downloads {
+				if d.ID == id {
+					a.downloads[i].Destination = filepath.Join(downloadDir, outName)
+					if itemTitle == "" || itemTitle == "Video" {
+						a.downloads[i].Title = generatedTitle
+					}
+					if a.wailsApp != nil {
+						a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+					}
+					break
+				}
+			}
+			a.mu.Unlock()
 
-			// Use half of configured threads but max 2 to avoid 429 rate-limiting.
-			// The server bans IPs that make too many simultaneous requests.
-			// yt-dlp downloads video + audio tracks in parallel, so effective connections = N*2.
-			hlsThreads := GlobalConfig.ConcurrentFragments / 2
-			if hlsThreads < 1 {
-				hlsThreads = 1
-			}
-			if hlsThreads > 2 {
-				hlsThreads = 2
-			}
-			threads := fmt.Sprintf("%d", hlsThreads)
 			args := []string{
 				downloadUrl,
+				"-P", "home:" + downloadDir,
+				"-P", "temp:" + tempDir,
+				"-o", outName,
 				"--downloader", "m3u8:native",
 				"-N", threads,
-				"--sleep-requests", "1",    // 1s sleep between fragment requests to avoid 429
 				"--socket-timeout", "20",
 				"--retries", "10",
-				"--fragment-retries", "15", // more retries for flaky CDNs
-				"-o", downloadPath,
+				"--fragment-retries", "15",
+				"--retry-sleep", "fragment:exp=1:20", // exponential backoff for 429
+				"--retry-sleep", "http:exp=1:20",
 			}
-			if itemPageUrl != "" {
-				args = append(args, "--referer", itemPageUrl)
+			// Many CDNs expect the Referer/Origin to be their own player's domain
+			if parsedUrl, err := url.Parse(downloadUrl); err == nil {
+				origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+				args = append(args, "--referer", origin+"/")
+				args = append(args, "--add-header", "Origin: "+origin)
 			}
+			// Add a standard User-Agent to prevent 404/403 errors from generic extractors
+			args = append(args, "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+			
 			cmd = exec.CommandContext(ctx, GetDependencyPath("yt-dlp"), args...)
 		} else {
 			// Classic multi-connection downloader via aria2c
 			filename := extractFilename(downloadUrl)
+			
+			titleToUse := itemTitle
+			if titleToUse == "" || titleToUse == "Video" {
+				if filename != "" {
+					titleToUse = strings.TrimSuffix(filename, filepath.Ext(filename))
+				}
+			}
+			
+			if titleToUse == "" || titleToUse == "Video" {
+				titleToUse = fmt.Sprintf("Video_%d", time.Now().Unix())
+			}
+			
+			// Use title with original extension
+			ext := filepath.Ext(filename)
+			if ext == "" {
+				ext = ".mp4"
+			}
+			filename = sanitizeFilename(titleToUse) + ext
+			
 			downloadPath := filepath.Join(homeDir, "Downloads") // aria2c takes dir and file separately
+
+			a.mu.Lock()
+			for i, item := range a.downloads {
+				if item.ID == id {
+					a.downloads[i].Destination = filepath.Join(downloadPath, filename)
+					if itemTitle == "" || itemTitle == "Video" {
+						a.downloads[i].Title = titleToUse
+					}
+					if a.wailsApp != nil {
+						a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+					}
+					break
+				}
+			}
+			a.mu.Unlock()
 
 			threads := fmt.Sprintf("%d", GlobalConfig.ConcurrentFragments)
 			args := []string{
@@ -184,9 +293,13 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				"-o", filename,
 			}
 
-			if itemPageUrl != "" {
-				args = append(args, fmt.Sprintf("--referer=%s", itemPageUrl))
+			// Same for aria2c
+			if parsedUrl, err := url.Parse(downloadUrl); err == nil {
+				origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+				args = append(args, fmt.Sprintf("--referer=%s/", origin))
+				args = append(args, "--header", "Origin: "+origin)
 			}
+			args = append(args, "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
 
 			args = append(args, downloadUrl)
 			cmd = exec.CommandContext(ctx, GetDependencyPath("aria2c"), args...)
@@ -222,10 +335,19 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				if text == "" {
 					continue
 				}
+				
+				// Do not override destination from yt-dlp output, as we already set it properly up-front.
+
 				isProgress := a.parseProgressLine(id, text, &lastEmitMs)
 				// Only log non-progress lines to avoid flooding
 				if !isProgress {
 					a.Logf("%s\n", text)
+					if a.wailsApp != nil {
+						a.wailsApp.Event.Emit("download_log", map[string]string{
+							"id":      id,
+							"message": text,
+						})
+					}
 				}
 			}
 		}()
@@ -243,6 +365,12 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				// Skip repetitive 429 retry lines and progress lines from the terminal log
 				if !isProgress && !strings.Contains(text, "Retrying fragment") {
 					a.Logf("%s\n", text)
+					if a.wailsApp != nil {
+						a.wailsApp.Event.Emit("download_log", map[string]string{
+							"id":      id,
+							"message": text,
+						})
+					}
 				}
 			}
 		}()
@@ -259,8 +387,8 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 		}
 
 		if itemIndex != -1 {
-			// If status is already cancelled, don't overwrite it
-			if a.downloads[itemIndex].Status == "cancelled" {
+			// If status is already cancelled or paused, don't overwrite it
+			if a.downloads[itemIndex].Status == "cancelled" || a.downloads[itemIndex].Status == "paused" {
 				return
 			}
 			
@@ -275,6 +403,7 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			if a.wailsApp != nil {
 				a.wailsApp.Event.Emit("download_updated", a.downloads[itemIndex])
 			}
+			a.saveHistory()
 		}
 	}()
 }

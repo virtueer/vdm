@@ -13,8 +13,14 @@ export interface DownloadItem {
     "size": string;
 
     /**
-     * "pending", "downloading", "completed", "error"
+     * "pending", "downloading", "paused", "completed", "error", "cancelled"
      */
     "status": string;
     "pageUrl": string;
+
+    /**
+     * The path to the file on disk
+     */
+    "destination"?: string;
+    "title": string;
 }
