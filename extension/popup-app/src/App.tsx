@@ -204,7 +204,7 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
             if (title && title.toLowerCase() !== 'video' && title !== 'Player') {
                 runFallback(title);
             } else {
-                chrome.tabs.get(tab.id, (t) => {
+                chrome.tabs.get(tab.id!, (t) => {
                     runFallback(t ? t.title || '' : '');
                 });
             }

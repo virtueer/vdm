@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Events } from "@wailsio/runtime";
-import { GetDownloads, GetConfig, SaveConfig, CancelDownload, PauseDownload, ResumeDownload, RemoveDownload, RetryDownload } from "../bindings/vdm/app";
+import { GetDownloads, GetConfig, SaveConfig, CancelDownload, PauseDownload, ResumeDownload, RemoveDownload, RetryDownload, ShowInFolder } from "../bindings/vdm/app";
 import type { AppConfig } from "../bindings/vdm/models";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Inbox, FileVideo, Activity, Settings, Terminal, DownloadCloud, XCircle, Pause, Play, Trash2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
+import { Inbox, FileVideo, Activity, Settings, Terminal, DownloadCloud, XCircle, Pause, Play, Trash2, ChevronDown, ChevronUp, RefreshCw, FolderOpen } from "lucide-react";
 import { SpeedChart } from "./components/SpeedChart";
 interface DownloadItem {
     id: string;
@@ -413,6 +413,7 @@ function SettingsView({ config, onChange }: { config: AppConfig | null, onChange
 function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: DownloadItem, logCount?: number, onViewLogs?: () => void, onDelete?: () => void }) {
     const filename = getFilenameFromUrl(item.url);
     const [expanded, setExpanded] = useState(false);
+    const [stats, setStats] = useState({ avgSpeed: '', duration: '' });
     
     let badgeVariant: "default" | "secondary" | "destructive" | "outline" = "secondary";
     let statusText = item.status;
@@ -475,6 +476,18 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
                                     <span className="text-xs text-primary font-bold">{item.speed}</span>
                                 </>
                             )}
+                            {stats.avgSpeed && (
+                                <>
+                                    <span className="text-muted-foreground/30">•</span>
+                                    <span className="text-xs text-orange-500 font-bold" title="Average Speed">Avg: {stats.avgSpeed}</span>
+                                </>
+                            )}
+                            {stats.duration && (
+                                <>
+                                    <span className="text-muted-foreground/30">•</span>
+                                    <span className="text-xs text-muted-foreground font-medium" title="Elapsed Time">⌚ {stats.duration}</span>
+                                </>
+                            )}
                         </div>
                     </div>
 
@@ -486,6 +499,16 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
                         >
                             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                         </button>
+
+                        {item.status === 'completed' && (
+                            <button 
+                                onClick={() => ShowInFolder(item.id)}
+                                className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md transition-colors mr-1"
+                                title="Show in Folder"
+                            >
+                                <FolderOpen className="w-4 h-4" />
+                            </button>
+                        )}
                         
                         {(item.status === 'downloading' || item.status === 'pending') && (
                             <div className="flex items-center gap-1">
@@ -567,7 +590,7 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
 
             {/* Collapsible Chart Area */}
             <div className={`transition-all duration-300 ease-in-out overflow-hidden border-t border-white/5 ${expanded ? 'h-[200px] opacity-100' : 'h-0 opacity-0'}`}>
-                <SpeedChart speedStr={item.speed} isDownloading={item.status === 'downloading'} />
+                <SpeedChart speedStr={item.speed} isDownloading={item.status === 'downloading'} onStatsUpdate={(avg, dur) => setStats({ avgSpeed: avg, duration: dur })} />
             </div>
         </Card>
     );

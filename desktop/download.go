@@ -27,10 +27,24 @@ func sanitizeFilename(name string) string {
 	if name == "" {
 		return ""
 	}
+	
+	// Replace newlines and tabs with spaces
+	name = strings.ReplaceAll(name, "\n", " ")
+	name = strings.ReplaceAll(name, "\r", " ")
+	name = strings.ReplaceAll(name, "\t", " ")
+
 	invalidChars := []string{"<", ">", ":", "\"", "/", "\\", "|", "?", "*"}
 	for _, char := range invalidChars {
 		name = strings.ReplaceAll(name, char, "_")
 	}
+	
+	// Collapse multiple spaces into one
+	for strings.Contains(name, "  ") {
+		name = strings.ReplaceAll(name, "  ", " ")
+	}
+	
+	name = strings.TrimSpace(name)
+
 	// Limit length
 	if len(name) > 100 {
 		name = name[:100]
@@ -175,8 +189,8 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				"-o", outName,
 				"--downloader", aria2cPath, 
 				"--downloader-args", fmt.Sprintf("aria2c:-x %s -s %s -k 1M --file-allocation=none", threads, threads),
-				"--retry-sleep", "fragment:exp=1:20",
-				"--retry-sleep", "http:exp=1:20",
+				"--retry-sleep", "fragment:2",
+				"--retry-sleep", "http:2",
 			}
 			if itemPageUrl != "" {
 				args = append(args, "--referer", itemPageUrl)
@@ -231,8 +245,8 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				"--socket-timeout", "20",
 				"--retries", "10",
 				"--fragment-retries", "15",
-				"--retry-sleep", "fragment:exp=1:20", // exponential backoff for 429
-				"--retry-sleep", "http:exp=1:20",
+				"--retry-sleep", "fragment:2", // linear short wait instead of exponential backoff
+				"--retry-sleep", "http:2",
 			}
 			// Many CDNs expect the Referer/Origin to be their own player's domain
 			if parsedUrl, err := url.Parse(downloadUrl); err == nil {

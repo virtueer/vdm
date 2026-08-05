@@ -82,6 +82,13 @@ export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePr
     return $Call.ByID(3654517795, w);
 }
 
+/**
+ * ShowInFolder opens the file explorer and selects the downloaded file
+ */
+export function ShowInFolder(id: string): $CancellablePromise<void> {
+    return $Call.ByID(1225131967, id);
+}
+
 export function StartDownloadProcess(id: string, downloadUrl: string): $CancellablePromise<void> {
     return $Call.ByID(377378744, id, downloadUrl);
 }

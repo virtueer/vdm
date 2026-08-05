@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -214,6 +216,28 @@ func (a *App) AddDownload(url, typ, size, pageUrl, title string) {
 // GetDownloads is exposed to frontend
 func (a *App) GetDownloads() []DownloadItem {
 	return a.downloads
+}
+
+// ShowInFolder opens the file explorer and selects the downloaded file
+func (a *App) ShowInFolder(id string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, item := range a.downloads {
+		if item.ID == id {
+			if item.Destination != "" {
+				dir := filepath.Dir(item.Destination)
+				switch runtime.GOOS {
+				case "windows":
+					exec.Command("explorer", "/select,", item.Destination).Start()
+				case "darwin":
+					exec.Command("open", "-R", item.Destination).Start()
+				default:
+					exec.Command("xdg-open", dir).Start()
+				}
+			}
+			break
+		}
+	}
 }
 
 // PauseDownload kills the current download process but keeps the state so it can be resumed
