@@ -4,6 +4,8 @@
 export interface AppConfig {
     "customPaths": { [_ in string]?: string } | null;
     "concurrentFragments": number;
+    "enableProbe": boolean;
+    "probeSizeMB": number;
 }
 
 export interface DownloadItem {

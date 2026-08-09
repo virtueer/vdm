@@ -64,6 +64,39 @@ func (s *Server) Start() {
 		json.NewEncoder(w).Encode(map[string]string{"status": "running"})
 	})
 
+	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		// Handle CORS
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(GlobalConfig)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			var config AppConfig
+			if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			GlobalConfig = config
+			saveConfig()
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
+			return
+		}
+
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	})
+
 	go func() {
 		fmt.Println("Starting HTTP server on :9614")
 		if err := http.ListenAndServe(":9614", mux); err != nil {

@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -78,6 +80,158 @@ var ytdlpRegex = regexp.MustCompile(`\[download\]\s+(?P<percent>[\d\.]+)%\s+of\s
 var aria2cRegex = regexp.MustCompile(`\[#[^\]]+\]\s+(\S+)/(\S+)\s+\((\d+)%\).*DL:(\S+)`)
 var ytDlpDestRegex = regexp.MustCompile(`\[download\] Destination: (.*)`)
 var ytDlpAlreadyDestRegex = regexp.MustCompile(`\[download\] (.*) has already been downloaded`)
+var ytDlpMergerRegex = regexp.MustCompile(`\[Merger\] Merging formats into "(.*)"`)
+
+// ServerProbeResult holds the results of probing a server
+type ServerProbeResult struct {
+	SpeedBytesPerSecond int64  // Measured download speed in bytes per second
+	SupportsRange       bool   // Whether the server supports HTTP Range requests
+	ContentLength       int64  // Total file size from Content-Length header
+	UserAgent           string // User agent to use for the download
+}
+
+// probeServer performs a quick HEAD + small GET request to measure server speed and capabilities
+func (a *App) probeServer(downloadUrl string) *ServerProbeResult {
+	result := &ServerProbeResult{
+		SpeedBytesPerSecond: 0,
+		SupportsRange:       true, // Assume true by default, let aria2c/yt-dlp handle it
+		ContentLength:       0,
+		UserAgent:           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+	}
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
+			DisableCompression: true,
+		},
+	}
+
+	// 1. HEAD request to check capabilities (optional, don't fail if it doesn't work)
+	headReq, _ := http.NewRequest("HEAD", downloadUrl, nil)
+	headReq.Header.Set("User-Agent", result.UserAgent)
+
+	headResp, headErr := client.Do(headReq)
+	if headErr == nil {
+		defer headResp.Body.Close()
+		
+		// Check Content-Length
+		if cl := headResp.Header.Get("Content-Length"); cl != "" {
+			fmt.Sscanf(cl, "%d", &result.ContentLength)
+		}
+
+		// Check Accept-Ranges
+		if ar := headResp.Header.Get("Accept-Ranges"); ar != "bytes" {
+			result.SupportsRange = false
+		}
+	} else {
+		a.Logf("Probe HEAD skipped: %v\n", headErr)
+	}
+
+	// 2. GET request to measure speed (download small chunk)
+	probeSize := int64(1 * 1024 * 1024) // Fixed 1 MB to avoid rate limiting
+	if GlobalConfig.ProbeSizeMB > 0 && GlobalConfig.ProbeSizeMB <= 3 {
+		probeSize = int64(GlobalConfig.ProbeSizeMB * 1024 * 1024)
+	}
+
+	getReq, _ := http.NewRequest("GET", downloadUrl, nil)
+	getReq.Header.Set("User-Agent", result.UserAgent)
+	if result.SupportsRange {
+		getReq.Header.Set("Range", fmt.Sprintf("bytes=0-%d", probeSize-1))
+	}
+
+	start := time.Now()
+	resp, getErr := client.Do(getReq)
+	if getErr != nil {
+		a.Logf("Probe GET skipped: %v\n", getErr)
+		return result
+	}
+	defer func() {
+		resp.Body.Close()
+	}()
+
+	// Read probe data with timeout
+	buf := make([]byte, 32*1024) // 32 KB buffer
+	totalRead := int64(0)
+	maxTime := 3 * time.Second // Max 3 seconds for probe
+	
+	for totalRead < probeSize && time.Since(start) < maxTime {
+		n, err := resp.Body.Read(buf)
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			if n > 0 {
+				totalRead += int64(n)
+			}
+			break
+		}
+		if err != nil {
+			a.Logf("Probe read error: %v\n", err)
+			break
+		}
+		totalRead += int64(n)
+	}
+
+	duration := time.Since(start).Seconds()
+	if duration > 0 && totalRead > 0 {
+		result.SpeedBytesPerSecond = int64(float64(totalRead) / duration)
+	}
+
+	a.Logf("Probe complete: read=%d bytes, time=%.2fs, speed=%d KB/s, range=%v\n",
+		totalRead, duration, result.SpeedBytesPerSecond/1024, result.SupportsRange)
+
+	return result
+}
+
+// decideThreads determines optimal thread count based on probe results and user config
+func (a *App) decideThreads(probe *ServerProbeResult, baseThreads int) int {
+	if probe == nil || !GlobalConfig.EnableProbe {
+		return baseThreads
+	}
+
+	// If server doesn't support Range, use 1 connection
+	if !probe.SupportsRange {
+		a.Logf("Server doesn't support Range, using 1 connection\n")
+		return 1
+	}
+
+	// If speed is very low, increase connections (max 16)
+	if probe.SpeedBytesPerSecond < 200*1024 { // < 200 KB/s
+		threads := baseThreads * 4
+		if threads > 16 {
+			threads = 16
+		}
+		a.Logf("Slow connection (%d KB/s), increasing threads to %d\n",
+			probe.SpeedBytesPerSecond/1024, threads)
+		return threads
+	}
+
+	// If speed is moderate, double connections
+	if probe.SpeedBytesPerSecond < 500*1024 { // 200-500 KB/s
+		threads := baseThreads * 2
+		if threads > 12 {
+			threads = 12
+		}
+		a.Logf("Moderate connection (%d KB/s), increasing threads to %d\n",
+			probe.SpeedBytesPerSecond/1024, threads)
+		return threads
+	}
+
+	// If speed is very high, reduce connections (min 2)
+	if probe.SpeedBytesPerSecond > 5*1024*1024 { // > 5 MB/s
+		threads := baseThreads / 2
+		if threads < 2 {
+			threads = 2
+		}
+		a.Logf("Fast connection (%d KB/s), reducing threads to %d\n",
+			probe.SpeedBytesPerSecond/1024, threads)
+		return threads
+	}
+
+	// Normal speed, use base threads
+	a.Logf("Normal connection (%d KB/s), using %d threads\n",
+		probe.SpeedBytesPerSecond/1024, baseThreads)
+	return baseThreads
+}
 
 // isProgressLine returns true if the line contains download progress info (regex match)
 func isProgressLine(line string) bool {
@@ -187,6 +341,7 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				"-P", "home:" + downloadDir,
 				"-P", "temp:" + tempDir,
 				"-o", outName,
+				"--js-runtimes", "node",
 				"--downloader", aria2cPath, 
 				"--downloader-args", fmt.Sprintf("aria2c:-x %s -s %s -k 1M --file-allocation=none", threads, threads),
 				"--retry-sleep", "fragment:2",
@@ -197,7 +352,10 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			}
 			cmd = exec.CommandContext(ctx, GetDependencyPath("yt-dlp"), args...)
 		} else if isHLS(downloadUrl) {
-			threads := fmt.Sprintf("%d", GlobalConfig.ConcurrentFragments)
+			// 🔍 PROBE: Measure server speed for HLS
+			probe := a.probeServer(downloadUrl)
+			hlsThreads := a.decideThreads(probe, GlobalConfig.ConcurrentFragments)
+			threads := fmt.Sprintf("%d", hlsThreads)
 			var outName string
 			
 			// 1. Chrome extension title (itemTitle)
@@ -297,12 +455,34 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			}
 			a.mu.Unlock()
 
-			threads := fmt.Sprintf("%d", GlobalConfig.ConcurrentFragments)
+			// 🔍 PROBE: Measure server speed and capabilities
+			if GlobalConfig.EnableProbe && a.wailsApp != nil {
+				a.wailsApp.Event.Emit("probe_start", map[string]interface{}{
+					"id": id,
+				})
+			}
+			probe := a.probeServer(downloadUrl)
+			threads := a.decideThreads(probe, GlobalConfig.ConcurrentFragments)
+			if GlobalConfig.EnableProbe && a.wailsApp != nil {
+				a.wailsApp.Event.Emit("probe_complete", map[string]interface{}{
+					"id":      id,
+					"speed":   probe.SpeedBytesPerSecond,
+					"threads": threads,
+				})
+			}
+			threadsStr := fmt.Sprintf("%d", threads)
+			// Brief pause after probe to avoid rate limiting
+			if GlobalConfig.EnableProbe {
+				time.Sleep(1 * time.Second)
+			}
+
 			args := []string{
-				"-x", threads,
-				"-s", threads,
+				"-x", threadsStr,
+				"-s", threadsStr,
 				"-k", "1M",
 				"--file-allocation=none",
+			"--max-tries-wait=5",
+			"--retry-wait=3",
 				"-d", downloadPath,
 				"-o", filename,
 			}
@@ -321,10 +501,34 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 
 		a.Logf("Executing command: %s %s\n", cmd.Path, strings.Join(cmd.Args, " "))
 
-		stdout, _ := cmd.StdoutPipe()
-		stderr, _ := cmd.StderrPipe()
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			a.Logf("Failed to create stdout pipe: %v\n", err)
+			return
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			a.Logf("Failed to create stderr pipe: %v\n", err)
+			return
+		}
 
-		cmd.Start()
+		if err := cmd.Start(); err != nil {
+			a.Logf("Failed to start command: %v\n", err)
+			// Update status to error
+			a.mu.Lock()
+			for i, item := range a.downloads {
+				if item.ID == id {
+					a.downloads[i].Status = "error"
+					if a.wailsApp != nil {
+						a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+					}
+					break
+				}
+			}
+			a.mu.Unlock()
+			return
+		}
+		a.Logf("Command started successfully\n")
 
 		splitCRLF := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 			if atEOF && len(data) == 0 {
@@ -350,7 +554,36 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 					continue
 				}
 				
-				// Do not override destination from yt-dlp output, as we already set it properly up-front.
+				// Capture actual output file path from yt-dlp
+				var destFile string
+				if match := ytDlpDestRegex.FindStringSubmatch(text); match != nil {
+					destFile = strings.TrimSpace(match[1])
+				} else if match := ytDlpAlreadyDestRegex.FindStringSubmatch(text); match != nil {
+					destFile = strings.TrimSpace(match[1])
+				} else if match := ytDlpMergerRegex.FindStringSubmatch(text); match != nil {
+					destFile = strings.TrimSpace(match[1])
+				}
+
+				if destFile != "" {
+					a.mu.Lock()
+					for i, item := range a.downloads {
+						if item.ID == id {
+							a.downloads[i].Destination = destFile
+							base := filepath.Base(destFile)
+							ext := filepath.Ext(base)
+							titleFromDest := strings.TrimSuffix(base, ext)
+							if a.downloads[i].Title == "" || a.downloads[i].Title == "Video" || a.downloads[i].Title == "YouTube Video" {
+								a.downloads[i].Title = titleFromDest
+							}
+							if a.wailsApp != nil {
+								a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+							}
+							break
+						}
+					}
+					a.mu.Unlock()
+					a.saveHistory()
+				}
 
 				isProgress := a.parseProgressLine(id, text, &lastEmitMs)
 				// Only log non-progress lines to avoid flooding
@@ -389,7 +622,7 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			}
 		}()
 
-		err := cmd.Wait()
+		err = cmd.Wait()
 
 		// Find index again as the array might have been modified
 		itemIndex := -1

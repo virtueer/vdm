@@ -18,11 +18,15 @@ import (
 type AppConfig struct {
 	CustomPaths         map[string]string `json:"customPaths"`
 	ConcurrentFragments int               `json:"concurrentFragments"`
+	EnableProbe         bool              `json:"enableProbe"`
+	ProbeSizeMB         int               `json:"probeSizeMB"`
 }
 
 var GlobalConfig = AppConfig{
 	CustomPaths:         make(map[string]string),
 	ConcurrentFragments: 4,
+	EnableProbe:         true,
+	ProbeSizeMB:         5,
 }
 
 func getConfigPath() string {
@@ -42,6 +46,9 @@ func loadConfig() {
 	}
 	if GlobalConfig.ConcurrentFragments <= 0 {
 		GlobalConfig.ConcurrentFragments = 4
+	}
+	if GlobalConfig.ProbeSizeMB <= 0 {
+		GlobalConfig.ProbeSizeMB = 5
 	}
 }
 

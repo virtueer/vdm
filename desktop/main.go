@@ -15,8 +15,8 @@ func main() {
 	myApp := NewApp()
 
 	app := application.New(application.Options{
-		Name:        "vdm-desktop",
-		Description: "VDM Video Downloader",
+		Name:        "video-download-manager",
+		Description: "Video Download Manager",
 		Services: []application.Service{
 			application.NewService(myApp),
 		},
@@ -36,7 +36,7 @@ func main() {
 	})
 
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "VDM Video Downloader",
+		Title:  "Video Download Manager",
 		Width:  1000,
 		Height: 618,
 		URL:    "/",

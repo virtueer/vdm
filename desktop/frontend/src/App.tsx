@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Inbox, FileVideo, Activity, Settings, Terminal, DownloadCloud, XCircle, Pause, Play, Trash2, ChevronDown, ChevronUp, RefreshCw, FolderOpen } from "lucide-react";
+import { Inbox, FileVideo, Activity, Settings, Terminal, DownloadCloud, XCircle, Pause, Play, Trash2, ChevronDown, ChevronUp, RefreshCw, FolderOpen, Zap, Search, Loader2, Check } from "lucide-react";
 import { SpeedChart } from "./components/SpeedChart";
 interface DownloadItem {
     id: string;
@@ -19,6 +19,20 @@ interface DownloadItem {
     downloadedSize?: string;
     totalSize?: string;
     title?: string;
+}
+
+interface ProbeInfo {
+    status: 'idle' | 'probing' | 'complete';
+    speed: number;
+    threads: number;
+    startTime: number;
+}
+
+function formatSpeed(bytesPerSec: number): string {
+    if (bytesPerSec < 1024) return `${bytesPerSec} B/s`;
+    if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+    if (bytesPerSec < 1024 * 1024 * 1024) return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+    return `${(bytesPerSec / (1024 * 1024 * 1024)).toFixed(2)} GB/s`;
 }
 
 function getFilenameFromUrl(url: string): string {
@@ -42,6 +56,10 @@ export default function App() {
     const [downloadLogs, setDownloadLogs] = useState<Record<string, string[]>>({});
     const [itemToDelete, setItemToDelete] = useState<string | null>(null);
     const [logModalItem, setLogModalItem] = useState<string | null>(null);
+    const [probes, setProbes] = useState<Record<string, ProbeInfo>>({});
+    const [manualUrl, setManualUrl] = useState("");
+    const [manualTitle, setManualTitle] = useState("");
+    const [showManualInput, setShowManualInput] = useState(false);
     const terminalEndRef = useRef<HTMLDivElement>(null);
 
     const activeCount = downloads.filter(d => d.status === 'downloading').length;
@@ -128,6 +146,32 @@ export default function App() {
                         return { ...prev, [evt.data.id]: newLogs };
                     });
                 }
+            }),
+            Events.On("probe_start", (evt: any) => {
+                if (evt.data) {
+                    setProbes(prev => ({
+                        ...prev,
+                        [evt.data.id]: {
+                            status: 'probing',
+                            speed: 0,
+                            threads: 0,
+                            startTime: Date.now()
+                        }
+                    }));
+                }
+            }),
+            Events.On("probe_complete", (evt: any) => {
+                if (evt.data) {
+                    setProbes(prev => ({
+                        ...prev,
+                        [evt.data.id]: {
+                            status: 'complete',
+                            speed: evt.data.speed,
+                            threads: evt.data.threads,
+                            startTime: Date.now()
+                        }
+                    }));
+                }
             })
         ];
 
@@ -145,32 +189,67 @@ export default function App() {
         SaveConfig(newConfig).catch(console.error);
     };
 
+    const handleManualDownload = () => {
+        if (!manualUrl.trim()) return;
+        
+        fetch('http://localhost:9614/api/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: manualUrl.trim(),
+                type: 'manual',
+                size: 'Unknown',
+                pageUrl: '',
+                title: manualTitle.trim() || ''
+            })
+        }).then(res => {
+            if (res.ok) {
+                setManualUrl('');
+                setManualTitle('');
+                setShowManualInput(false);
+            } else {
+                alert('Failed to add download. Make sure the desktop app is running.');
+            }
+        }).catch(err => {
+            console.error('Failed to add download:', err);
+            alert('Failed to add download.');
+        });
+    };
+
+    const handlePasteUrl = async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            setManualUrl(text);
+        } catch (err) {
+            console.error('Failed to read clipboard:', err);
+        }
+    };
+
     return (
         <div className="flex flex-col h-full bg-background text-foreground transition-colors">
-            <header className="flex items-center justify-between px-6 py-4 border-b bg-card shrink-0">
+            <header className="flex items-center justify-between px-6 py-3 border-b bg-card shrink-0">
                 <div className="flex items-center gap-3">
-                    <div className="bg-primary p-2 rounded-xl text-primary-foreground">
-                        <Activity className="w-5 h-5" />
+                    <div className="bg-primary p-1.5 rounded-lg text-primary-foreground">
+                        <Activity className="w-4 h-4" />
                     </div>
                     <div>
-                        <h1 className="text-lg font-semibold leading-none tracking-tight">VDM Desktop</h1>
-                        <p className="text-xs text-muted-foreground mt-1">Virtueer Media Grabber</p>
+                        <h1 className="text-base font-semibold leading-none">Video Download Manager</h1>
                     </div>
                 </div>
-                <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2 mr-4 bg-muted p-1 rounded-lg">
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 bg-muted/50 p-0.5 rounded-md">
                         <button 
                             onClick={() => setActiveTab("downloads")}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-2 ${activeTab === 'downloads' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                            className={`px-3 py-1.5 text-sm font-medium rounded transition-all flex items-center gap-2 ${activeTab === 'downloads' ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
                         >
-                            <DownloadCloud className="w-4 h-4" />
+                            <DownloadCloud className="w-3.5 h-3.5" />
                             Downloads
                         </button>
                         <button 
                             onClick={() => setActiveTab("settings")}
-                            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all flex items-center gap-2 ${activeTab === 'settings' ? 'bg-background shadow-sm text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                            className={`px-3 py-1.5 text-sm font-medium rounded transition-all flex items-center gap-2 ${activeTab === 'settings' ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
                         >
-                            <Settings className="w-4 h-4" />
+                            <Settings className="w-3.5 h-3.5" />
                             Settings
                         </button>
                     </div>
@@ -180,71 +259,129 @@ export default function App() {
                         className={`p-2 rounded-md transition-colors ${showTerminal ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                         title="Toggle Terminal Logs"
                     >
-                        <Terminal className="w-5 h-5" />
+                        <Terminal className="w-4 h-4" />
                     </button>
 
                     <div className="flex items-center gap-2 ml-2">
-                        <span className="relative flex h-3 w-3">
+                        <span className="relative flex h-2.5 w-2.5">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
+                          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500"></span>
                         </span>
-                        <span className="text-sm font-medium text-muted-foreground hidden sm:inline-block">Connected</span>
+                        <span className="text-xs font-medium text-muted-foreground hidden sm:inline-block">Connected</span>
                     </div>
                 </div>
             </header>
 
             <main className="flex-1 overflow-hidden flex flex-col relative">
                 {/* Main Content Area */}
-                <div className={`w-full px-6 flex flex-col transition-all duration-300 ${showTerminal ? 'h-1/2 pb-2 pt-6' : 'h-full py-6'}`}>
+                <div className={`w-full px-6 flex flex-col transition-all duration-300 ${showTerminal ? 'h-1/2 pb-2 pt-4' : 'h-full py-4'}`}>
                     {activeTab === "downloads" ? (
                         <>
-                            <div className="mb-4 shrink-0 flex items-center justify-between">
+                            <div className="mb-3 shrink-0 flex items-center justify-between">
                                 <div>
-                                    <h2 className="text-2xl font-bold tracking-tight">Downloads</h2>
-                                    <p className="text-muted-foreground">Monitor and manage your media downloads.</p>
+                                    <h2 className="text-xl font-semibold">Downloads</h2>
+                                    <p className="text-sm text-muted-foreground">Monitor and manage your media downloads.</p>
                                 </div>
-                                <div className="flex items-center gap-3 bg-muted/50 p-2 rounded-lg border border-border/50">
-                                    <div className="flex flex-col items-center px-3">
-                                        <span className="text-lg font-semibold text-primary leading-none">{activeCount}</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1">Active</span>
+                                <div className="flex items-center gap-4 text-sm">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-muted-foreground">Active:</span>
+                                        <span className="font-medium text-primary">{activeCount}</span>
                                     </div>
-                                    <div className="w-px h-8 bg-border"></div>
-                                    <div className="flex flex-col items-center px-3">
-                                        <span className="text-lg font-semibold leading-none">{queuedCount}</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1">Queued</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-muted-foreground">Queued:</span>
+                                        <span className="font-medium">{queuedCount}</span>
                                     </div>
-                                    <div className="w-px h-8 bg-border"></div>
-                                    <div className="flex flex-col items-center px-3">
-                                        <span className="text-lg font-semibold text-green-500 leading-none">{completedCount}</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1">Done</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-muted-foreground">Done:</span>
+                                        <span className="font-medium text-green-500">{completedCount}</span>
                                     </div>
-                                    <div className="w-px h-8 bg-border"></div>
-                                    <div className="flex flex-col items-center px-3">
-                                        <span className="text-lg font-semibold text-destructive leading-none">{erroredCount}</span>
-                                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1">Failed</span>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="text-muted-foreground">Failed:</span>
+                                        <span className="font-medium text-destructive">{erroredCount}</span>
                                     </div>
                                 </div>
                             </div>
 
-                            <Card className="flex-1 overflow-hidden border-dashed shadow-none">
+                            {/* Manual Download Input */}
+                            <Card className="mb-3">
+                                <CardContent className="p-3">
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => setShowManualInput(!showManualInput)}
+                                            className="px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2 shrink-0"
+                                        >
+                                            <DownloadCloud className="w-4 h-4" />
+                                            Add URL
+                                        </button>
+                                        {showManualInput && (
+                                            <>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Paste video URL here..."
+                                                    value={manualUrl}
+                                                    onChange={(e) => setManualUrl(e.target.value)}
+                                                    onKeyDown={(e) => e.key === 'Enter' && handleManualDownload()}
+                                                    className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                    autoFocus
+                                                />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Title (optional)"
+                                                    value={manualTitle}
+                                                    onChange={(e) => setManualTitle(e.target.value)}
+                                                    onKeyDown={(e) => e.key === 'Enter' && handleManualDownload()}
+                                                    className="w-48 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                />
+                                                <button
+                                                    onClick={handlePasteUrl}
+                                                    className="px-2 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors shrink-0"
+                                                    title="Paste from clipboard"
+                                                >
+                                                    <Search className="w-4 h-4" />
+                                                </button>
+                                                <button
+                                                    onClick={handleManualDownload}
+                                                    disabled={!manualUrl.trim()}
+                                                    className="px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                                                >
+                                                    Download
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        setShowManualInput(false);
+                                                        setManualUrl('');
+                                                        setManualTitle('');
+                                                    }}
+                                                    className="px-2 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors shrink-0"
+                                                >
+                                                    <XCircle className="w-4 h-4" />
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </CardContent>
+                            </Card>
+
+                            <Card className="flex-1 overflow-hidden">
                                 {downloads.length === 0 ? (
                                     <div className="h-full flex flex-col items-center justify-center text-center p-8">
-                                        <div className="bg-muted p-4 rounded-full mb-4">
-                                            <Inbox className="w-8 h-8 text-muted-foreground" />
+                                        <div className="bg-muted p-3 rounded-full mb-3">
+                                            <Inbox className="w-6 h-6 text-muted-foreground" />
                                         </div>
-                                        <h3 className="text-lg font-semibold">No downloads yet</h3>
-                                        <p className="text-sm text-muted-foreground max-w-sm mt-2">
-                                            Send videos from the VDM Chrome Extension to start downloading them directly to your PC.
+                                        <h3 className="text-base font-medium">No downloads yet</h3>
+                                        <p className="text-sm text-muted-foreground max-w-sm mt-1">
+                                            Send videos from the Chrome Extension to start downloading them directly to your PC.
                                         </p>
                                     </div>
                                 ) : (
                                     <ScrollArea className="h-full">
-                                        <div className="p-4 space-y-3">
+                                        <div className="p-4 space-y-2">
                                             {downloads.map(dl => (
                                                 <DownloadCard 
                                                     key={dl.id} 
                                                     item={dl} 
                                                     logCount={downloadLogs[dl.id]?.length || 0}
+                                                    probeInfo={probes[dl.id]}
                                                     onViewLogs={() => setLogModalItem(dl.id)}
                                                     onDelete={() => setItemToDelete(dl.id)}
                                                 />
@@ -261,11 +398,11 @@ export default function App() {
 
                 {/* Terminal Pane */}
                 {showTerminal && (
-                    <div className="h-1/2 border-t bg-black w-full flex flex-col shrink-0 animate-in slide-in-from-bottom-8">
+                    <div className="h-1/2 border-t bg-black w-full flex flex-col shrink-0">
                         <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
                             <div className="flex items-center gap-2 text-zinc-400">
-                                <Terminal className="w-4 h-4" />
-                                <span className="text-xs font-medium uppercase tracking-wider">Live Logs</span>
+                                <Terminal className="w-3.5 h-3.5" />
+                                <span className="text-xs font-medium">Live Logs</span>
                             </div>
                             <button onClick={() => setLogs([])} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
                                 Clear
@@ -286,10 +423,10 @@ export default function App() {
             {/* Modals */}
             {itemToDelete && (
                 <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-card border shadow-lg rounded-xl max-w-md w-full p-6 animate-in zoom-in-95">
-                        <h3 className="text-lg font-semibold mb-2">Delete Confirmation</h3>
+                    <div className="bg-card border shadow-lg rounded-lg max-w-md w-full p-6">
+                        <h3 className="text-base font-semibold mb-2">Delete Confirmation</h3>
                         <p className="text-muted-foreground text-sm mb-6">
-                            Are you sure you want to permanently delete this item? If it is currently downloading, the process will be canceled and any downloaded files will be removed. This action cannot be undone.
+                            Are you sure you want to permanently delete this item? This action cannot be undone.
                         </p>
                         <div className="flex justify-end gap-3">
                             <button 
@@ -319,26 +456,26 @@ export default function App() {
 
             {logModalItem && (
                 <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-card border shadow-lg rounded-xl max-w-2xl w-full flex flex-col h-[60vh] animate-in zoom-in-95">
+                    <div className="bg-card border shadow-lg rounded-lg max-w-2xl w-full flex flex-col h-[60vh]">
                         <div className="flex items-center justify-between p-4 border-b">
-                            <h3 className="text-lg font-semibold flex items-center gap-2">
-                                <Terminal className="w-5 h-5 text-muted-foreground" />
+                            <h3 className="text-base font-semibold flex items-center gap-2">
+                                <Terminal className="w-4 h-4 text-muted-foreground" />
                                 Process Logs
                             </h3>
                             <button 
                                 onClick={() => setLogModalItem(null)}
                                 className="p-1 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors"
                             >
-                                <XCircle className="w-5 h-5" />
+                                <XCircle className="w-4 h-4" />
                             </button>
                         </div>
-                        <ScrollArea className="flex-1 p-4 bg-black rounded-b-xl">
+                        <ScrollArea className="flex-1 p-4 bg-black rounded-b-lg">
                             <div className="font-mono text-[11px] leading-tight text-zinc-300 pb-4">
                                 {(downloadLogs[logModalItem] || []).length === 0 ? (
-                                    <div className="text-zinc-500 italic">No logs collected for this download yet.</div>
+                                    <div className="text-zinc-500">No logs collected for this download yet.</div>
                                 ) : (
                                     (downloadLogs[logModalItem] || []).map((log, i) => (
-                                        <div key={i} className="whitespace-pre-wrap break-all border-b border-zinc-800/50 py-1 hover:bg-zinc-900/50">{log}</div>
+                                        <div key={i} className="whitespace-pre-wrap break-all border-b border-zinc-800/50 py-1">{log}</div>
                                     ))
                                 )}
                             </div>
@@ -355,51 +492,80 @@ function SettingsView({ config, onChange }: { config: AppConfig | null, onChange
 
     return (
         <div className="flex-1 flex flex-col">
-            <div className="mb-4 shrink-0">
-                <h2 className="text-2xl font-bold tracking-tight">Settings</h2>
-                <p className="text-muted-foreground">Configure application preferences.</p>
+            <div className="mb-3 shrink-0">
+                <h2 className="text-xl font-semibold">Settings</h2>
+                <p className="text-sm text-muted-foreground">Configure application preferences.</p>
             </div>
-            <Card className="flex-1 shadow-none overflow-y-auto">
+            <Card className="flex-1 overflow-y-auto">
                 <CardContent className="p-6 max-w-2xl">
-                    <div className="space-y-8">
+                    <div className="space-y-6">
                         <div>
-                            <h3 className="text-lg font-medium">Download Preferences</h3>
-                            <div className="mt-4 space-y-4">
+                            <h3 className="text-base font-medium">Download Preferences</h3>
+                            <div className="mt-3 space-y-4">
                                 <div className="flex items-center justify-between gap-4">
                                     <div className="space-y-0.5">
                                         <label className="text-sm font-medium leading-none">Concurrent Connections</label>
-                                        <p className="text-[13px] text-muted-foreground">Number of simultaneous fragments to download per video. Higher values are faster but may cause rate-limit bans (HTTP 429).</p>
+                                        <p className="text-xs text-muted-foreground">Number of simultaneous fragments to download per video.</p>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <input 
-                                            type="number" 
-                                            min="1" 
-                                            max="32" 
-                                            value={config.concurrentFragments}
-                                            onChange={(e) => {
-                                                const val = parseInt(e.target.value) || 1;
-                                                onChange({ ...config, concurrentFragments: val });
-                                            }}
-                                            className="flex h-9 w-20 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                                        />
+                                    <input 
+                                        type="number" 
+                                        min="1" 
+                                        max="32" 
+                                        value={config.concurrentFragments}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value) || 1;
+                                            onChange({ ...config, concurrentFragments: val });
+                                        }}
+                                        className="flex h-9 w-20 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                    />
+                                </div>
+
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="space-y-0.5">
+                                        <label className="text-sm font-medium leading-none">Server Probe</label>
+                                        <p className="text-xs text-muted-foreground">Automatically detect server speed and adjust connections.</p>
                                     </div>
+                                    <div
+                                        onClick={() => onChange({ ...config, enableProbe: !config.enableProbe })}
+                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${config.enableProbe ? 'bg-primary' : 'bg-muted'}`}
+                                    >
+                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${config.enableProbe ? 'translate-x-6' : 'translate-x-1'}`} />
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-4">
+                                    <div className="space-y-0.5">
+                                        <label className="text-sm font-medium leading-none">Probe Size (MB)</label>
+                                        <p className="text-xs text-muted-foreground">Amount of data to download for speed testing.</p>
+                                    </div>
+                                    <input 
+                                        type="number" 
+                                        min="1" 
+                                        max="20" 
+                                        value={config.probeSizeMB}
+                                        onChange={(e) => {
+                                            const val = parseInt(e.target.value) || 5;
+                                            onChange({ ...config, probeSizeMB: val });
+                                        }}
+                                        className="flex h-9 w-20 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         <div>
-                            <h3 className="text-lg font-medium">Custom Dependency Paths</h3>
-                            <p className="text-[13px] text-muted-foreground mt-1 mb-4">Paths to explicitly selected external executables.</p>
+                            <h3 className="text-base font-medium">Custom Dependency Paths</h3>
+                            <p className="text-xs text-muted-foreground mt-1">Paths to explicitly selected external executables.</p>
                             
-                            <div className="space-y-3">
+                            <div className="mt-3 space-y-2">
                                 {Object.entries(config.customPaths || {}).map(([name, path]) => (
-                                    <div key={name} className="flex flex-col gap-1.5 p-3 rounded-lg border bg-muted/40">
-                                        <span className="text-sm font-semibold capitalize">{name}</span>
+                                    <div key={name} className="flex flex-col gap-1 p-3 rounded-md border bg-muted/30">
+                                        <span className="text-sm font-medium capitalize">{name}</span>
                                         <span className="text-xs font-mono text-muted-foreground break-all">{path}</span>
                                     </div>
                                 ))}
                                 {Object.keys(config.customPaths || {}).length === 0 && (
-                                    <div className="text-sm text-muted-foreground italic">No custom paths configured. Tools will be auto-downloaded to ~/.vdm/bin.</div>
+                                    <div className="text-sm text-muted-foreground">No custom paths configured. Tools will be auto-downloaded to ~/.vdm/bin.</div>
                                 )}
                             </div>
                         </div>
@@ -410,7 +576,7 @@ function SettingsView({ config, onChange }: { config: AppConfig | null, onChange
     );
 }
 
-function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: DownloadItem, logCount?: number, onViewLogs?: () => void, onDelete?: () => void }) {
+function DownloadCard({ item, logCount = 0, probeInfo, onViewLogs, onDelete }: { item: DownloadItem, logCount?: number, probeInfo?: ProbeInfo, onViewLogs?: () => void, onDelete?: () => void }) {
     const filename = getFilenameFromUrl(item.url);
     const [expanded, setExpanded] = useState(false);
     const [stats, setStats] = useState({ avgSpeed: '', duration: '' });
@@ -423,7 +589,7 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
         statusText = 'Pending';
         badgeVariant = 'secondary';
     } else if (item.status === 'downloading') {
-        statusText = 'Downloading...';
+        statusText = 'Downloading';
         badgeVariant = 'default';
     } else if (item.status === 'paused') {
         statusText = 'Paused';
@@ -442,59 +608,88 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
 
     const showProgressInfo = item.status === 'downloading' || item.status === 'completed' || item.status === 'paused';
 
+    // Probe status display
+    const renderProbeStatus = () => {
+        if (!probeInfo) return null;
+        
+        if (probeInfo.status === 'probing') {
+            const elapsed = Math.floor((Date.now() - probeInfo.startTime) / 1000);
+            return (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Checking server...</span>
+                    <span className="text-[10px] text-muted-foreground/70">{elapsed}s</span>
+                </div>
+            );
+        }
+        
+        if (probeInfo.status === 'complete') {
+            return (
+                <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+                    <Check className="w-3 h-3" />
+                    <span>{formatSpeed(probeInfo.speed)}</span>
+                    <span className="text-muted-foreground/70">•</span>
+                    <span>{probeInfo.threads} threads</span>
+                </div>
+            );
+        }
+        
+        return null;
+    };
+
     return (
-        <Card className="overflow-hidden transition-all hover:shadow-lg relative group bg-card/40 backdrop-blur-xl border-white/20 dark:border-white/5 flex flex-col">
-            <CardContent className="p-4 flex flex-col gap-3 relative z-10 shrink-0">
-                <div className="flex items-center gap-4">
-                    <div className={`p-3 rounded-xl shadow-sm ${item.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-muted/80 text-muted-foreground'}`}>
-                        <FileVideo className="w-6 h-6" />
+        <Card className="overflow-hidden transition-all hover:shadow-md relative group flex flex-col">
+            <CardContent className="p-4 flex flex-col gap-2.5">
+                <div className="flex items-center gap-3">
+                    <div className={`p-2 rounded-lg ${item.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-muted text-muted-foreground'}`}>
+                        <FileVideo className="w-5 h-5" />
                     </div>
                     
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                            <h4 className="font-semibold text-sm truncate pr-4" title={item.url}>{item.title || filename}</h4>
-                            <Badge variant={badgeVariant} className="text-[10px] shrink-0 uppercase tracking-wider">
+                            <h4 className="font-medium text-sm truncate pr-4" title={item.url}>{item.title || filename}</h4>
+                            <Badge variant={badgeVariant} className="text-[10px] shrink-0">
                                 {statusText}
                             </Badge>
                         </div>
-                        <div className="flex items-center gap-2 mt-1.5">
-                            <Badge variant="secondary" className="text-[10px] h-5 px-1.5 font-medium rounded-md">
+                        <div className="flex items-center gap-2 mt-1">
+                            <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
                                 {item.type.toUpperCase()}
                             </Badge>
-                            <span className="text-xs font-medium text-muted-foreground/80">
+                            <span className="text-xs text-muted-foreground">
                                 {item.totalSize || item.size}
                             </span>
                             {logCount > 0 && (
-                                <button onClick={onViewLogs} className="flex items-center gap-1 text-[10px] uppercase font-bold text-orange-500 hover:text-orange-400 bg-orange-500/10 hover:bg-orange-500/20 px-1.5 py-0.5 rounded transition-colors ml-1" title="View Process Logs">
+                                <button onClick={onViewLogs} className="flex items-center gap-1 text-[10px] text-orange-500 hover:text-orange-400 hover:bg-orange-500/10 px-1.5 py-0.5 rounded transition-colors" title="View Process Logs">
                                     <Terminal className="w-3 h-3" />
-                                    {logCount} Logs
+                                    {logCount}
                                 </button>
                             )}
                             {item.speed && (item.status === 'downloading') && (
                                 <>
                                     <span className="text-muted-foreground/30">•</span>
-                                    <span className="text-xs text-primary font-bold">{item.speed}</span>
+                                    <span className="text-xs text-primary font-medium">{item.speed}</span>
                                 </>
                             )}
                             {stats.avgSpeed && (
                                 <>
                                     <span className="text-muted-foreground/30">•</span>
-                                    <span className="text-xs text-orange-500 font-bold" title="Average Speed">Avg: {stats.avgSpeed}</span>
+                                    <span className="text-xs text-muted-foreground" title="Average Speed">Avg: {stats.avgSpeed}</span>
                                 </>
                             )}
                             {stats.duration && (
                                 <>
                                     <span className="text-muted-foreground/30">•</span>
-                                    <span className="text-xs text-muted-foreground font-medium" title="Elapsed Time">⌚ {stats.duration}</span>
+                                    <span className="text-xs text-muted-foreground" title="Elapsed Time">⌚ {stats.duration}</span>
                                 </>
                             )}
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-1 bg-background/50 backdrop-blur-sm rounded-lg p-1 border shadow-sm">
+                    <div className="flex items-center gap-1">
                         <button 
                             onClick={() => setExpanded(!expanded)}
-                            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors mr-1"
+                            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
                             title="Toggle Chart"
                         >
                             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -503,7 +698,7 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
                         {item.status === 'completed' && (
                             <button 
                                 onClick={() => ShowInFolder(item.id)}
-                                className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md transition-colors mr-1"
+                                className="p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md transition-colors"
                                 title="Show in Folder"
                             >
                                 <FolderOpen className="w-4 h-4" />
@@ -529,17 +724,17 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
                             </div>
                         )}
                         {item.status === 'paused' && (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                                 <button
                                     onClick={() => ResumeDownload(item.id).catch(console.error)}
-                                    className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary/20 transition-colors"
+                                    className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md transition-colors"
                                     title="Resume"
                                 >
-                                    <Play className="w-4 h-4 ml-0.5" />
+                                    <Play className="w-4 h-4" />
                                 </button>
                                 <button
                                     onClick={() => { if (onDelete) onDelete(); }}
-                                    className="w-8 h-8 rounded-full bg-destructive/10 text-destructive flex items-center justify-center hover:bg-destructive/20 transition-colors"
+                                    className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-colors"
                                     title="Cancel & Delete File"
                                 >
                                     <Trash2 className="w-4 h-4" />
@@ -548,17 +743,17 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
                         )}
 
                         {(item.status === 'error' || item.status === 'cancelled') && (
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                                 <button
                                     onClick={() => RetryDownload(item.id).catch(console.error)}
-                                    className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center hover:bg-primary/20 transition-colors"
+                                    className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md transition-colors"
                                     title="Retry"
                                 >
                                     <RefreshCw className="w-4 h-4" />
                                 </button>
                                 <button
                                     onClick={() => { if (onDelete) onDelete(); }}
-                                    className="w-8 h-8 rounded-full bg-destructive/10 text-destructive flex items-center justify-center hover:bg-destructive/20 transition-colors"
+                                    className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-colors"
                                     title="Remove completely"
                                 >
                                     <Trash2 className="w-4 h-4" />
@@ -569,7 +764,7 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
                         {item.status === 'completed' && (
                             <button
                                 onClick={() => { if (onDelete) onDelete(); }}
-                                className="w-8 h-8 rounded-full bg-destructive/10 text-destructive flex items-center justify-center hover:bg-destructive/20 transition-colors"
+                                className="p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-colors"
                                 title="Remove from list"
                             >
                                 <Trash2 className="w-4 h-4" />
@@ -577,6 +772,9 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
                         )}
                     </div>
                 </div>
+
+                {/* Probe Status */}
+                {renderProbeStatus()}
 
                 {(showProgressInfo || item.status === 'error' || item.status === 'cancelled') && (
                     <div className="flex items-center gap-3">
@@ -589,7 +787,7 @@ function DownloadCard({ item, logCount = 0, onViewLogs, onDelete }: { item: Down
             </CardContent>
 
             {/* Collapsible Chart Area */}
-            <div className={`transition-all duration-300 ease-in-out overflow-hidden border-t border-white/5 ${expanded ? 'h-[200px] opacity-100' : 'h-0 opacity-0'}`}>
+            <div className={`transition-all duration-300 ease-in-out overflow-hidden border-t ${expanded ? 'h-[200px] opacity-100' : 'h-0 opacity-0'}`}>
                 <SpeedChart speedStr={item.speed} isDownloading={item.status === 'downloading'} onStatsUpdate={(avg, dur) => setStats({ avgSpeed: avg, duration: dur })} />
             </div>
         </Card>

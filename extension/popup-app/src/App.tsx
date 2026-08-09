@@ -2,7 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Copy, EyeOff, Download, Check, Search } from "lucide-react";
+import { Copy, EyeOff, Download, Check, Search, Settings, ToggleLeft, Video } from "lucide-react";
+
+function YoutubeIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" {...props}>
+      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+    </svg>
+  );
+}
 
 export interface VideoLink {
   url: string;
@@ -21,10 +29,18 @@ export default function App() {
   const [links, setLinks] = useState<VideoLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentTabId, setCurrentTabId] = useState<number | null>(null);
+  const [autoIntercept, setAutoIntercept] = useState(true);
 
   useEffect(() => {
     // Only run if we are in a chrome extension environment
     if (typeof chrome !== 'undefined' && chrome.tabs) {
+      // Get auto-intercept setting
+      chrome.runtime.sendMessage({ action: 'getAutoIntercept' }, (response) => {
+        if (response && response.autoIntercept !== undefined) {
+          setAutoIntercept(response.autoIntercept);
+        }
+      });
+      
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         const tab = tabs[0];
         if (tab.id) {
@@ -67,10 +83,42 @@ export default function App() {
     }
   };
 
+  const toggleAutoIntercept = () => {
+    if (typeof chrome !== 'undefined') {
+      chrome.runtime.sendMessage({ action: 'toggleAutoIntercept' }, (response) => {
+        if (response && response.success) {
+          setAutoIntercept(response.autoIntercept);
+        }
+      });
+    }
+  };
+
   return (
     <div className="w-full flex flex-col h-[500px] bg-background">
-      <div className="flex items-center px-4 py-3 bg-primary text-primary-foreground shadow-sm">
-        <h2 className="text-sm font-semibold m-0 tracking-tight">Virtueer Media Grabber</h2>
+      <div className="flex items-center justify-between px-4 py-3 bg-primary text-primary-foreground shadow-sm">
+        <h2 className="text-sm font-semibold m-0 tracking-tight">Video Download Manager</h2>
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          className="h-7 w-7 text-primary-foreground hover:bg-primary/80"
+          onClick={toggleAutoIntercept}
+          title={autoIntercept ? "Auto-intercept is ON" : "Auto-intercept is OFF"}
+        >
+          {autoIntercept ? (
+            <ToggleLeft className="h-4 w-4" />
+          ) : (
+            <Settings className="h-4 w-4" />
+          )}
+        </Button>
+      </div>
+
+      <div className="px-4 py-2 bg-muted/50 border-b">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">Auto-intercept downloads:</span>
+          <span className={`font-medium ${autoIntercept ? 'text-green-600' : 'text-red-600'}`}>
+            {autoIntercept ? 'ON' : 'OFF'}
+          </span>
+        </div>
       </div>
 
       <ScrollArea className="flex-1 p-3">
@@ -106,6 +154,23 @@ export default function App() {
   );
 }
 
+function getYouTubeId(url: string): string | null {
+  if (!url) return null;
+  if (url.includes('v=')) {
+    const match = url.match(/[?&]v=([^&]+)/);
+    if (match) return match[1];
+  }
+  if (url.includes('/shorts/')) {
+    const match = url.match(/\/shorts\/([^?\/]+)/);
+    if (match) return match[1];
+  }
+  if (url.includes('youtu.be/')) {
+    const match = url.match(/youtu\.be\/([^?\/]+)/);
+    if (match) return match[1];
+  }
+  return null;
+}
+
 function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) {
   const [copied, setCopied] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState("Download");
@@ -113,11 +178,15 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
   const [testResult, setTestResult] = useState<string | null>(null);
 
   const urlString = video.url.length > 70 ? video.url.substring(0, 70) + '...' : video.url;
+  const isYouTube = video.type === 'youtube' || video.url.includes('youtube.com') || video.url.includes('youtu.be');
+  const ytVideoId = isYouTube ? getYouTubeId(video.url) : null;
+  const displayTitle = video.title || urlString;
   
-  const isAudio = (video.mimeType && video.mimeType.startsWith('audio/')) || 
+  const isAudio = !isYouTube && (
+                  (video.mimeType && video.mimeType.startsWith('audio/')) || 
                   /\.(mp3|wav|m4a|aac|ogg|flac|mka)$/i.test(video.url) ||
                   /_aud(\d+)?\.(txt|m3u8)$/i.test(video.url) ||
-                  /audio/i.test(video.url.split('/').pop() || "");
+                  /audio/i.test(video.url.split('/').pop() || ""));
 
   const handleCopy = async () => {
     try {
@@ -141,7 +210,7 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
               url: video.url,
               type: video.type || 'network',
               size: video.size || 'Unknown',
-              pageUrl: video.pageUrl || '',
+              pageUrl: video.pageUrl || video.url,
               title: video.title || ''
           })
       });
@@ -156,7 +225,7 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
         console.error('Failed to send to app: ', err);
         setDownloadStatus("Failed");
         setTimeout(() => setDownloadStatus("Download"), 1500);
-        alert('VDM Desktop application is not running or unreachable.');
+        alert('Video Download Manager desktop app is not running or unreachable.');
     }
   };
 
@@ -223,8 +292,8 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
     <Card className="overflow-hidden shadow-sm transition-all hover:shadow-md">
       <CardContent className="p-3">
         <div className="flex items-start justify-between gap-2 mb-2">
-          <div className="text-xs font-medium text-foreground break-all leading-tight flex-1 line-clamp-2" title={video.url}>
-            {urlString}
+          <div className="text-xs font-semibold text-foreground break-words leading-tight flex-1 line-clamp-2" title={video.title || video.url}>
+            {displayTitle}
           </div>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 rounded-full" onClick={handleTestTitle} title="Test Title Extraction">
@@ -252,7 +321,24 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
         </div>
 
         <div className="mb-3 rounded-md overflow-hidden bg-black/5 flex items-center justify-center">
-          {isAudio ? (
+          {isYouTube ? (
+            <div className="relative w-full h-[140px] bg-black flex items-center justify-center group overflow-hidden">
+              {ytVideoId ? (
+                <img 
+                  src={`https://img.youtube.com/vi/${ytVideoId}/hqdefault.jpg`} 
+                  alt={video.title || "YouTube Video"} 
+                  className="w-full h-full object-cover opacity-90 transition-opacity group-hover:opacity-100" 
+                  onError={(e) => { (e.target as HTMLElement).style.display = 'none'; }}
+                />
+              ) : null}
+              <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-1">
+                <YoutubeIcon className="w-10 h-10 text-red-600 drop-shadow-md" />
+                <span className="text-[11px] text-white/90 font-medium px-2 py-0.5 bg-black/60 rounded">
+                  YouTube Video (yt-dlp)
+                </span>
+              </div>
+            </div>
+          ) : isAudio ? (
             <audio src={video.url} controls className="w-full h-10 outline-none" />
           ) : (
             <video 
@@ -279,3 +365,4 @@ function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) 
     </Card>
   );
 }
+
