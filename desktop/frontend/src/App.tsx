@@ -189,11 +189,12 @@ export default function App() {
                 if (data && data.id) {
                     setDownloads(prev => prev.map(d => {
                         if (d.id === data.id) {
+                            const isPausedOrCancelled = data.status === 'paused' || data.status === 'cancelled';
                             return {
                                 ...d,
                                 ...data,
                                 progress: data.progress !== undefined && data.progress !== null ? data.progress : d.progress,
-                                speed: data.speed || d.speed,
+                                speed: isPausedOrCancelled ? '' : (data.speed !== undefined ? data.speed : d.speed),
                                 downloadedSize: data.downloadedSize || d.downloadedSize,
                                 totalSize: data.totalSize || d.totalSize,
                             };
@@ -208,10 +209,13 @@ export default function App() {
                     const parsedPct = parseFloat(data.percentage);
                     setDownloads(prev => prev.map(d => {
                         if (d.id === data.id) {
+                            if (d.status === 'paused' || d.status === 'cancelled' || d.status === 'completed') {
+                                return d;
+                            }
                             return {
                                 ...d,
                                 progress: !isNaN(parsedPct) ? parsedPct : d.progress,
-                                speed: data.speed || d.speed,
+                                speed: data.speed !== undefined ? data.speed : d.speed,
                                 downloadedSize: data.downloaded || d.downloadedSize,
                                 totalSize: data.total || d.totalSize
                             };
@@ -235,12 +239,13 @@ export default function App() {
                 }
             }),
             Events.On("download_log", (evt: any) => {
-                if (evt.data && evt.data.id && evt.data.message) {
+                const data = evt?.data ?? evt;
+                if (data && data.id && data.message) {
                     setDownloadLogs(prev => {
-                        const existingLogs = prev[evt.data.id] || [];
-                        const newLogs = [...existingLogs, evt.data.message];
-                        if (newLogs.length > 500) return { ...prev, [evt.data.id]: newLogs.slice(newLogs.length - 500) };
-                        return { ...prev, [evt.data.id]: newLogs };
+                        const existingLogs = prev[data.id] || [];
+                        const newLogs = [...existingLogs, data.message];
+                        if (newLogs.length > 500) return { ...prev, [data.id]: newLogs.slice(newLogs.length - 500) };
+                        return { ...prev, [data.id]: newLogs };
                     });
                 }
             }),
@@ -1298,7 +1303,10 @@ function DownloadCard({ item, logCount = 0, probeInfo, onViewLogs, onDelete, onO
                         {(item.status === 'downloading' || item.status === 'pending') && (
                             <div className="flex items-center gap-1">
                                 <button 
-                                    onClick={() => PauseDownload(item.id)}
+                                    onClick={() => {
+                                        setDownloads(prev => prev.map(d => d.id === item.id ? { ...d, status: 'paused', speed: '', statusMsg: 'Paused' } : d));
+                                        PauseDownload(item.id).catch(console.error);
+                                    }}
                                     className="p-1.5 text-muted-foreground hover:text-primary hover:bg-primary/10 rounded-md transition-colors"
                                     title="Pause Download"
                                 >
@@ -1396,7 +1404,7 @@ function DownloadCard({ item, logCount = 0, probeInfo, onViewLogs, onDelete, onO
                         downloadedSize={item.downloadedSize}
                         totalSize={item.totalSize || item.size}
                         progress={progress}
-                        isDownloading={true} 
+                        isDownloading={item.status === 'downloading'} 
                         onStatsUpdate={(avg, dur) => setStats({ avgSpeed: avg, duration: dur })} 
                     />
                 </div>

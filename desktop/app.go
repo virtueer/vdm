@@ -31,7 +31,7 @@ type DownloadItem struct {
 	FormatID       string  `json:"formatId,omitempty"`  // Selected format ID e.g. "137+bestaudio" or "140"
 	StatusMsg      string  `json:"statusMsg,omitempty"` // Short live status line e.g. "Downloading webpage", "Moving file..."
 	Progress       float64 `json:"progress,omitempty"`
-	Speed          string  `json:"speed,omitempty"`
+	Speed          string  `json:"speed"`
 	DownloadedSize string  `json:"downloadedSize,omitempty"`
 	TotalSize      string  `json:"totalSize,omitempty"`
 }
@@ -496,23 +496,36 @@ func (a *App) ShowInFolder(id string) {
 // PauseDownload kills the current download process but keeps the state so it can be resumed
 func (a *App) PauseDownload(id string) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 
+	wasRunning := false
 	if cancel, exists := a.cancelFuncs[id]; exists {
 		a.Logf("Pausing download %s\n", id)
 		cancel()
 		delete(a.cancelFuncs, id)
+		wasRunning = true
 	}
 
+	ts := time.Now().Format("15:04:05")
+	logMsg := fmt.Sprintf("[%s] Download paused", ts)
+
 	for i, item := range a.downloads {
-		if item.ID == id && (item.Status == "downloading" || item.Status == "pending") {
+		if item.ID == id && (wasRunning || item.Status == "downloading" || item.Status == "pending") {
 			a.downloads[i].Status = "paused"
+			a.downloads[i].Speed = ""
+			a.downloads[i].StatusMsg = "Paused"
 			if a.wailsApp != nil {
 				a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+				a.wailsApp.Event.Emit("download_log", map[string]string{
+					"id":      id,
+					"message": logMsg,
+				})
 			}
 			break
 		}
 	}
+	a.mu.Unlock()
+
+	a.SaveDownloadLog(id, logMsg)
 	a.saveHistory()
 }
 
@@ -579,13 +592,18 @@ func (a *App) RemoveDownload(id string, deleteFile bool) {
 func (a *App) ResumeDownload(id string) {
 	a.mu.Lock()
 	var targetUrl string
-	for _, item := range a.downloads {
+	for i, item := range a.downloads {
 		if item.ID == id && item.Status == "paused" {
+			a.downloads[i].Status = "pending"
 			targetUrl = item.URL
+			if a.wailsApp != nil {
+				a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+			}
 			break
 		}
 	}
 	a.mu.Unlock()
+	a.saveHistory()
 
 	if targetUrl != "" {
 		a.Logf("Resuming download %s\n", id)

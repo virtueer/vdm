@@ -36,7 +36,7 @@ export interface DownloadItem {
      */
     "statusMsg"?: string;
     "progress"?: number;
-    "speed"?: string;
+    "speed": string;
     "downloadedSize"?: string;
     "totalSize"?: string;
 }

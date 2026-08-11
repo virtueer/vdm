@@ -63,7 +63,7 @@ function formatSpeed(val: number): string {
 export function SpeedChart({ speedStr, downloadedSize, totalSize, progress, isDownloading, onStatsUpdate }: SpeedChartProps) {
     const [history, setHistory] = useState<any[]>([]);
     
-    const startTimeRef = useRef<number | null>(null);
+    const accumulatedTimeRef = useRef<number>(0);
     const latestSpeedRef = useRef<string>(speedStr || '');
     const latestDownloadedRef = useRef<{ dl?: string; tot?: string; pct?: number }>({ dl: downloadedSize, tot: totalSize, pct: progress });
     
@@ -79,23 +79,26 @@ export function SpeedChart({ speedStr, downloadedSize, totalSize, progress, isDo
         latestDownloadedRef.current = { dl: downloadedSize, tot: totalSize, pct: progress };
     }, [downloadedSize, totalSize, progress]);
 
+    // Reset history and duration when progress is 0
+    useEffect(() => {
+        if (progress === 0) {
+            accumulatedTimeRef.current = 0;
+            setHistory([]);
+        }
+    }, [progress]);
+
     // Timer effect: collects data every second and updates stats continuously
     useEffect(() => {
         if (!isDownloading) {
-            startTimeRef.current = null;
             lastMBRef.current = 0;
             lastTimeRef.current = 0;
             return;
         }
         
-        if (startTimeRef.current === null) {
-            startTimeRef.current = Date.now();
-        }
-        
         const interval = setInterval(() => {
-            if (startTimeRef.current === null) return;
             const now = Date.now();
-            const elapsed = Math.max(1, Math.floor((now - startTimeRef.current) / 1000));
+            accumulatedTimeRef.current += 1;
+            const elapsed = accumulatedTimeRef.current;
             
             let currentSpeed = parseSpeed(latestSpeedRef.current);
             

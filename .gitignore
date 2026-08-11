@@ -33,3 +33,4 @@ extension/popup-app/node_modules/
 .idea/
 *.swp
 
+.aider*
