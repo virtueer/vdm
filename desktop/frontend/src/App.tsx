@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useRef } from "react";
 import { Events } from "@wailsio/runtime";
-import { GetDownloads, GetConfig, SaveConfig, CancelDownload, PauseDownload, ResumeDownload, RemoveDownload, RetryDownload, ShowInFolder } from "../bindings/vdm/app";
-import type { AppConfig } from "../bindings/vdm/models";
+import { GetDownloads, GetConfig, SaveConfig, CancelDownload, PauseDownload, ResumeDownload, RemoveDownload, RetryDownload, ShowInFolder, GetYouTubeFormats, SetDownloadFormat, GetTerminalLogs, GetDownloadLogs } from "../bindings/vdm/app";
+import type { AppConfig, YouTubeFormat } from "../bindings/vdm/models";
 import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Inbox, FileVideo, Activity, Settings, Terminal, DownloadCloud, XCircle, Pause, Play, Trash2, ChevronDown, ChevronUp, RefreshCw, FolderOpen, Zap, Search, Loader2, Check } from "lucide-react";
+import { Inbox, FileVideo, Activity, Settings, Terminal, DownloadCloud, XCircle, Pause, Play, Trash2, ChevronDown, ChevronUp, RefreshCw, FolderOpen, Zap, Search, Loader2, Check, ListFilter, SlidersHorizontal, Copy } from "lucide-react";
 import { SpeedChart } from "./components/SpeedChart";
+
 interface DownloadItem {
     id: string;
     url: string;
@@ -19,6 +20,8 @@ interface DownloadItem {
     downloadedSize?: string;
     totalSize?: string;
     title?: string;
+    formatId?: string;
+    statusMsg?: string;
 }
 
 interface ProbeInfo {
@@ -35,6 +38,14 @@ function formatSpeed(bytesPerSec: number): string {
     return `${(bytesPerSec / (1024 * 1024 * 1024)).toFixed(2)} GB/s`;
 }
 
+function formatBytes(bytes: number): string {
+    if (!bytes || bytes <= 0) return "-";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 function getFilenameFromUrl(url: string): string {
     try {
         const path = new URL(url).pathname;
@@ -47,19 +58,95 @@ function getFilenameFromUrl(url: string): string {
     return "Video.mp4";
 }
 
+function isYouTubeUrl(url: string): boolean {
+    return url.includes("youtube.com") || url.includes("youtu.be");
+}
+
+function TerminalLine({ line }: { line: string }) {
+    const tsMatch = line.match(/^(\[\d{2}:\d{2}:\d{2}\])\s*(.*)$/);
+    let timeStr = "";
+    let content = line;
+    if (tsMatch) {
+        timeStr = tsMatch[1];
+        content = tsMatch[2];
+    }
+
+    let colorClass = "text-zinc-300";
+
+    if (content.startsWith("Executing command:") || content.startsWith("New download request:")) {
+        colorClass = "text-amber-400 font-medium";
+    } else if (content.includes("Download completed") || content.includes("Command started successfully")) {
+        colorClass = "text-emerald-400 font-medium";
+    } else if (content.toLowerCase().includes("error") || content.toLowerCase().includes("failed") || content.includes("Deleting partial") || content.includes("Deleting file")) {
+        colorClass = "text-rose-400";
+    } else if (content.startsWith("[youtube]") || content.startsWith("[info]")) {
+        colorClass = "text-sky-400";
+    } else if (content.startsWith("[download]")) {
+        colorClass = "text-teal-300";
+    } else if (content.startsWith("[#")) {
+        colorClass = "text-emerald-400 font-mono";
+    }
+
+    return (
+        <div className="flex items-start gap-2 text-[11px] font-mono py-0.5 border-b border-zinc-800/40 hover:bg-zinc-800/30 px-1.5 rounded transition-colors group">
+            {timeStr && (
+                <span className="text-zinc-500 group-hover:text-zinc-400 font-medium select-none shrink-0 text-[10px] pt-0.5">
+                    {timeStr}
+                </span>
+            )}
+            <span className={`break-all leading-relaxed ${colorClass}`}>
+                {content}
+            </span>
+        </div>
+    );
+}
+
 export default function App() {
     const [downloads, setDownloads] = useState<DownloadItem[]>([]);
     const [config, setConfig] = useState<AppConfig | null>(null);
     const [activeTab, setActiveTab] = useState<"downloads" | "settings">("downloads");
     const [showTerminal, setShowTerminal] = useState(false);
+    const [terminalHeight, setTerminalHeight] = useState<number>(280);
     const [logs, setLogs] = useState<string[]>([]);
     const [downloadLogs, setDownloadLogs] = useState<Record<string, string[]>>({});
-    const [itemToDelete, setItemToDelete] = useState<string | null>(null);
-    const [logModalItem, setLogModalItem] = useState<string | null>(null);
     const [probes, setProbes] = useState<Record<string, ProbeInfo>>({});
-    const [manualUrl, setManualUrl] = useState("");
-    const [manualTitle, setManualTitle] = useState("");
+    
     const [showManualInput, setShowManualInput] = useState(false);
+    const [manualUrl, setManualUrl] = useState('');
+    const [manualTitle, setManualTitle] = useState('');
+    
+    const [itemToDelete, setItemToDelete] = useState<string | null>(null);
+    const [deleteFileFromDisk, setDeleteFileFromDisk] = useState<boolean>(true);
+    const [logModalItem, setLogModalItem] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (logModalItem) {
+            GetDownloadLogs(logModalItem).then((savedLogs) => {
+                if (Array.isArray(savedLogs) && savedLogs.length > 0) {
+                    setDownloadLogs(prev => ({
+                        ...prev,
+                        [logModalItem]: savedLogs
+                    }));
+                }
+            }).catch(console.error);
+        }
+    }, [logModalItem]);
+
+    const [formatModalTarget, setFormatModalTarget] = useState<{ id?: string; url: string; title?: string } | null>(null);
+    const [formatLoading, setFormatLoading] = useState(false);
+    const [formatError, setFormatError] = useState<string | null>(null);
+    const [formatsList, setFormatsList] = useState<YouTubeFormat[]>([]);
+    const [selectedFormatId, setSelectedFormatId] = useState<string | null>(null);
+    const [autoAppendAudio, setAutoAppendAudio] = useState(true);
+    const [formatCategory, setFormatCategory] = useState<'all' | 'combined' | 'video' | 'audio'>('all');
+
+    type FormatSortField = 'formatId' | 'ext' | 'resolution' | 'fps' | 'filesize' | 'tbr' | 'vcodec' | 'acodec' | 'formatNote';
+    const [formatSortField, setFormatSortField] = useState<FormatSortField | null>(null);
+    const [formatSortAsc, setFormatSortAsc] = useState<boolean>(true);
+
+    const [copiedTerminalLogs, setCopiedTerminalLogs] = useState(false);
+    const [copiedProcessLogs, setCopiedProcessLogs] = useState(false);
+
     const terminalEndRef = useRef<HTMLDivElement>(null);
 
     const activeCount = downloads.filter(d => d.status === 'downloading').length;
@@ -68,8 +155,7 @@ export default function App() {
     const erroredCount = downloads.filter(d => d.status === 'error' || d.status === 'cancelled').length;
 
     useEffect(() => {
-        // Load initial downloads & config
-        GetDownloads().then((data: any) => {
+        GetDownloads().then((data) => {
             if (Array.isArray(data)) setDownloads(data);
         }).catch(console.error);
 
@@ -77,29 +163,39 @@ export default function App() {
             setConfig(cfg);
         }).catch(console.error);
 
+        GetTerminalLogs().then((savedLogs) => {
+            if (Array.isArray(savedLogs) && savedLogs.length > 0) {
+                setLogs(savedLogs);
+            }
+        }).catch(console.error);
+
         // Listen for events
         const unsubs = [
             Events.On("new_download", (evt: any) => {
-                if (evt.data) {
+                const data = evt?.data ?? evt;
+                if (data && data.id) {
                     setDownloads(prev => {
-                        if (prev.find(d => d.id === evt.data.id)) return prev;
-                        return [evt.data, ...prev];
+                        if (prev.find(d => d.id === data.id)) return prev;
+                        return [data, ...prev];
                     });
+
+                    if (isYouTubeUrl(data.url) && !data.formatId) {
+                        openFormatModal({ id: data.id, url: data.url, title: data.title });
+                    }
                 }
             }),
             Events.On("download_updated", (evt: any) => {
-                if (evt.data) {
+                const data = evt?.data ?? evt;
+                if (data && data.id) {
                     setDownloads(prev => prev.map(d => {
-                        if (d.id === evt.data.id) {
-                            // Preserve progress/speed/size from previous state
-                            // so that error/completed status doesn't reset the progress bar
+                        if (d.id === data.id) {
                             return {
                                 ...d,
-                                ...evt.data,
-                                progress: d.progress ?? evt.data.progress,
-                                speed: d.speed,
-                                downloadedSize: d.downloadedSize,
-                                totalSize: d.totalSize ?? evt.data.totalSize,
+                                ...data,
+                                progress: data.progress !== undefined && data.progress !== null ? data.progress : d.progress,
+                                speed: data.speed || d.speed,
+                                downloadedSize: data.downloadedSize || d.downloadedSize,
+                                totalSize: data.totalSize || d.totalSize,
                             };
                         }
                         return d;
@@ -107,15 +203,17 @@ export default function App() {
                 }
             }),
             Events.On("download_progress", (evt: any) => {
-                if (evt.data) {
+                const data = evt?.data ?? evt;
+                if (data && data.id) {
+                    const parsedPct = parseFloat(data.percentage);
                     setDownloads(prev => prev.map(d => {
-                        if (d.id === evt.data.id) {
+                        if (d.id === data.id) {
                             return {
                                 ...d,
-                                progress: parseFloat(evt.data.percentage) || d.progress,
-                                speed: evt.data.speed || d.speed,
-                                downloadedSize: evt.data.downloaded || d.downloadedSize,
-                                totalSize: evt.data.total || d.totalSize
+                                progress: !isNaN(parsedPct) ? parsedPct : d.progress,
+                                speed: data.speed || d.speed,
+                                downloadedSize: data.downloaded || d.downloadedSize,
+                                totalSize: data.total || d.totalSize
                             };
                         }
                         return d;
@@ -131,7 +229,6 @@ export default function App() {
                 if (evt.data) {
                     setLogs(prev => {
                         const newLogs = [...prev, evt.data];
-                        // Limit to 1000 lines
                         if (newLogs.length > 1000) return newLogs.slice(newLogs.length - 1000);
                         return newLogs;
                     });
@@ -179,17 +276,18 @@ export default function App() {
     }, []);
 
     useEffect(() => {
-        if (showTerminal && terminalEndRef.current) {
+        // Only scroll to bottom when opening terminal initially
+        if (showTerminal && terminalEndRef.current && logs.length > 0 && logs.length <= 5) {
             terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
         }
-    }, [logs, showTerminal]);
+    }, [showTerminal]);
 
     const handleConfigChange = (newConfig: AppConfig) => {
         setConfig(newConfig);
         SaveConfig(newConfig).catch(console.error);
     };
 
-    const handleManualDownload = () => {
+    const handleManualDownload = (chosenFormatId?: string) => {
         if (!manualUrl.trim()) return;
         
         fetch('http://localhost:9614/api/download', {
@@ -197,16 +295,18 @@ export default function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 url: manualUrl.trim(),
-                type: 'manual',
+                type: isYouTubeUrl(manualUrl) ? 'youtube' : 'manual',
                 size: 'Unknown',
                 pageUrl: '',
-                title: manualTitle.trim() || ''
+                title: manualTitle.trim() || '',
+                formatId: chosenFormatId || ''
             })
         }).then(res => {
             if (res.ok) {
                 setManualUrl('');
                 setManualTitle('');
                 setShowManualInput(false);
+                setFormatModalTarget(null);
             } else {
                 alert('Failed to add download. Make sure the desktop app is running.');
             }
@@ -224,6 +324,132 @@ export default function App() {
             console.error('Failed to read clipboard:', err);
         }
     };
+
+    const openFormatModal = (target: { id?: string; url: string; title?: string }) => {
+        setFormatModalTarget(target);
+        setFormatLoading(true);
+        setFormatError(null);
+        setFormatsList([]);
+        setSelectedFormatId(null);
+
+        GetYouTubeFormats(target.url)
+            .then(res => {
+                if (Array.isArray(res)) {
+                    setFormatsList(res);
+                } else {
+                    setFormatError("No formats found.");
+                }
+            })
+            .catch(err => {
+                console.error("Format fetch error:", err);
+                setFormatError("yt-dlp format fetch failed: " + (err?.message || err));
+            })
+            .finally(() => {
+                setFormatLoading(false);
+            });
+    };
+
+    const applySelectedFormat = () => {
+        if (!formatModalTarget || !selectedFormatId) return;
+
+        let finalFormat = selectedFormatId;
+        const targetFormat = formatsList.find(f => f.formatId === selectedFormatId);
+        
+        // If it's a video-only format and autoAppendAudio is enabled, append +bestaudio
+        if (targetFormat && targetFormat.vcodec !== 'none' && targetFormat.acodec === 'none' && autoAppendAudio) {
+            finalFormat = `${selectedFormatId}+bestaudio`;
+        }
+
+        if (formatModalTarget.id) {
+            // Existing item in list
+            SetDownloadFormat(formatModalTarget.id, finalFormat).then(() => {
+                // If it's currently paused/errored, resume it
+                const existing = downloads.find(d => d.id === formatModalTarget.id);
+                if (existing && (existing.status === 'paused' || existing.status === 'error' || existing.status === 'cancelled')) {
+                    ResumeDownload(formatModalTarget.id).catch(console.error);
+                }
+            }).catch(console.error);
+        } else {
+            // New manual download input
+            handleManualDownload(finalFormat);
+        }
+
+        setFormatModalTarget(null);
+    };
+
+    const handleFormatSort = (field: FormatSortField) => {
+        if (formatSortField === field) {
+            setFormatSortAsc(!formatSortAsc);
+        } else {
+            setFormatSortField(field);
+            setFormatSortAsc(true);
+        }
+    };
+
+    const renderFormatSortHeader = (label: string, field: FormatSortField) => {
+        const isActive = formatSortField === field;
+        return (
+            <th 
+                onClick={() => handleFormatSort(field)}
+                className="p-2.5 cursor-pointer hover:bg-muted/70 transition-colors select-none group"
+            >
+                <div className="flex items-center gap-1">
+                    <span>{label}</span>
+                    <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
+                        {isActive ? (formatSortAsc ? '▲' : '▼') : '↕'}
+                    </span>
+                </div>
+            </th>
+        );
+    };
+
+    const filteredFormats = formatsList.filter(f => {
+        const isVideo = f.vcodec !== 'none' && f.vcodec !== '';
+        const isAudio = f.acodec !== 'none' && f.acodec !== '';
+        if (formatCategory === 'combined') return isVideo && isAudio;
+        if (formatCategory === 'video') return isVideo && !isAudio;
+        if (formatCategory === 'audio') return isAudio && !isVideo;
+        return true;
+    });
+
+    const sortedFormats = [...filteredFormats].sort((a, b) => {
+        if (!formatSortField) return 0;
+
+        let valA: any = a[formatSortField];
+        let valB: any = b[formatSortField];
+
+        if (formatSortField === 'resolution') {
+            const parseRes = (r: string) => {
+                if (!r) return 0;
+                const match = r.match(/(\d+)x(\d+)/);
+                if (match) return parseInt(match[2]);
+                const matchP = r.match(/(\d+)p/);
+                if (matchP) return parseInt(matchP[1]);
+                const single = r.match(/(\d+)/);
+                return single ? parseInt(single[1]) : 0;
+            };
+            valA = parseRes(a.resolution);
+            valB = parseRes(b.resolution);
+        } else if (formatSortField === 'formatId') {
+            const intA = parseInt(a.formatId);
+            const intB = parseInt(b.formatId);
+            if (!isNaN(intA) && !isNaN(intB)) {
+                valA = intA;
+                valB = intB;
+            }
+        }
+
+        if (valA === undefined || valA === null) return 1;
+        if (valB === undefined || valB === null) return -1;
+
+        if (typeof valA === 'number' && typeof valB === 'number') {
+            return formatSortAsc ? valA - valB : valB - valA;
+        }
+
+        const strA = String(valA).toLowerCase();
+        const strB = String(valB).toLowerCase();
+        return formatSortAsc ? strA.localeCompare(strB) : strB.localeCompare(strA);
+    });
 
     return (
         <div className="flex flex-col h-full bg-background text-foreground transition-colors">
@@ -274,145 +500,230 @@ export default function App() {
 
             <main className="flex-1 overflow-hidden flex flex-col relative">
                 {/* Main Content Area */}
-                <div className={`w-full px-6 flex flex-col transition-all duration-300 ${showTerminal ? 'h-1/2 pb-2 pt-4' : 'h-full py-4'}`}>
-                    {activeTab === "downloads" ? (
-                        <>
-                            <div className="mb-3 shrink-0 flex items-center justify-between">
-                                <div>
-                                    <h2 className="text-xl font-semibold">Downloads</h2>
-                                    <p className="text-sm text-muted-foreground">Monitor and manage your media downloads.</p>
+                <div 
+                    style={showTerminal ? { height: `calc(100% - ${terminalHeight}px)` } : { height: '100%' }}
+                    className="w-full px-6 py-4 flex flex-col transition-all duration-150 overflow-hidden"
+                >
+                    <div className={`flex-1 flex flex-col min-h-0 ${activeTab === "downloads" ? "" : "hidden"}`}>
+                        <div className="mb-3 shrink-0 flex items-center justify-between">
+                            <div>
+                                <h2 className="text-xl font-semibold">Downloads</h2>
+                                <p className="text-sm text-muted-foreground">Monitor and manage your media downloads.</p>
+                            </div>
+                            <div className="flex items-center gap-4 text-sm">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-muted-foreground">Active:</span>
+                                    <span className="font-medium text-primary">{activeCount}</span>
                                 </div>
-                                <div className="flex items-center gap-4 text-sm">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-muted-foreground">Queued:</span>
+                                    <span className="font-medium text-foreground">{queuedCount}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-muted-foreground">Completed:</span>
+                                    <span className="font-medium text-foreground">{completedCount}</span>
+                                </div>
+                                {erroredCount > 0 && (
                                     <div className="flex items-center gap-1.5">
-                                        <span className="text-muted-foreground">Active:</span>
-                                        <span className="font-medium text-primary">{activeCount}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="text-muted-foreground">Queued:</span>
-                                        <span className="font-medium">{queuedCount}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="text-muted-foreground">Done:</span>
-                                        <span className="font-medium text-green-500">{completedCount}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="text-muted-foreground">Failed:</span>
+                                        <span className="text-muted-foreground">Errors:</span>
                                         <span className="font-medium text-destructive">{erroredCount}</span>
                                     </div>
-                                </div>
-                            </div>
-
-                            {/* Manual Download Input */}
-                            <Card className="mb-3">
-                                <CardContent className="p-3">
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            onClick={() => setShowManualInput(!showManualInput)}
-                                            className="px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2 shrink-0"
-                                        >
-                                            <DownloadCloud className="w-4 h-4" />
-                                            Add URL
-                                        </button>
-                                        {showManualInput && (
-                                            <>
-                                                <input
-                                                    type="text"
-                                                    placeholder="Paste video URL here..."
-                                                    value={manualUrl}
-                                                    onChange={(e) => setManualUrl(e.target.value)}
-                                                    onKeyDown={(e) => e.key === 'Enter' && handleManualDownload()}
-                                                    className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                                    autoFocus
-                                                />
-                                                <input
-                                                    type="text"
-                                                    placeholder="Title (optional)"
-                                                    value={manualTitle}
-                                                    onChange={(e) => setManualTitle(e.target.value)}
-                                                    onKeyDown={(e) => e.key === 'Enter' && handleManualDownload()}
-                                                    className="w-48 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                                                />
-                                                <button
-                                                    onClick={handlePasteUrl}
-                                                    className="px-2 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors shrink-0"
-                                                    title="Paste from clipboard"
-                                                >
-                                                    <Search className="w-4 h-4" />
-                                                </button>
-                                                <button
-                                                    onClick={handleManualDownload}
-                                                    disabled={!manualUrl.trim()}
-                                                    className="px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                                                >
-                                                    Download
-                                                </button>
-                                                <button
-                                                    onClick={() => {
-                                                        setShowManualInput(false);
-                                                        setManualUrl('');
-                                                        setManualTitle('');
-                                                    }}
-                                                    className="px-2 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors shrink-0"
-                                                >
-                                                    <XCircle className="w-4 h-4" />
-                                                </button>
-                                            </>
-                                        )}
-                                    </div>
-                                </CardContent>
-                            </Card>
-
-                            <Card className="flex-1 overflow-hidden">
-                                {downloads.length === 0 ? (
-                                    <div className="h-full flex flex-col items-center justify-center text-center p-8">
-                                        <div className="bg-muted p-3 rounded-full mb-3">
-                                            <Inbox className="w-6 h-6 text-muted-foreground" />
-                                        </div>
-                                        <h3 className="text-base font-medium">No downloads yet</h3>
-                                        <p className="text-sm text-muted-foreground max-w-sm mt-1">
-                                            Send videos from the Chrome Extension to start downloading them directly to your PC.
-                                        </p>
-                                    </div>
-                                ) : (
-                                    <ScrollArea className="h-full">
-                                        <div className="p-4 space-y-2">
-                                            {downloads.map(dl => (
-                                                <DownloadCard 
-                                                    key={dl.id} 
-                                                    item={dl} 
-                                                    logCount={downloadLogs[dl.id]?.length || 0}
-                                                    probeInfo={probes[dl.id]}
-                                                    onViewLogs={() => setLogModalItem(dl.id)}
-                                                    onDelete={() => setItemToDelete(dl.id)}
-                                                />
-                                            ))}
-                                        </div>
-                                    </ScrollArea>
                                 )}
-                            </Card>
-                        </>
-                    ) : (
+                            </div>
+                        </div>
+
+                        {/* Manual Download Input */}
+                        <Card className="mb-3">
+                            <CardContent className="p-3">
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setShowManualInput(!showManualInput)}
+                                        className="px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors flex items-center gap-2 shrink-0"
+                                    >
+                                        <DownloadCloud className="w-4 h-4" />
+                                        Add URL
+                                    </button>
+                                    {showManualInput && (
+                                        <>
+                                            <input
+                                                type="text"
+                                                placeholder="Paste video URL here..."
+                                                value={manualUrl}
+                                                onChange={(e) => setManualUrl(e.target.value)}
+                                                onKeyDown={(e) => e.key === 'Enter' && handleManualDownload()}
+                                                className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                                autoFocus
+                                            />
+                                            <input
+                                                type="text"
+                                                placeholder="Title (optional)"
+                                                value={manualTitle}
+                                                onChange={(e) => setManualTitle(e.target.value)}
+                                                onKeyDown={(e) => e.key === 'Enter' && handleManualDownload()}
+                                                className="w-48 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                            />
+                                            <button
+                                                onClick={handlePasteUrl}
+                                                className="px-2 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors shrink-0"
+                                                title="Paste from clipboard"
+                                            >
+                                                <Search className="w-4 h-4" />
+                                            </button>
+
+                                            {isYouTubeUrl(manualUrl) && (
+                                                <button
+                                                    onClick={() => openFormatModal({ url: manualUrl.trim(), title: manualTitle.trim() })}
+                                                    disabled={!manualUrl.trim()}
+                                                    className="px-3 py-2 bg-orange-600 text-white rounded-md text-sm font-medium hover:bg-orange-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 shrink-0"
+                                                    title="yt-dlp -F format list"
+                                                >
+                                                    <ListFilter className="w-4 h-4" />
+                                                    Format List (-F)
+                                                </button>
+                                            )}
+
+                                            <button
+                                                onClick={() => handleManualDownload()}
+                                                disabled={!manualUrl.trim()}
+                                                className="px-3 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+                                            >
+                                                Download
+                                            </button>
+                                            <button
+                                                onClick={() => {
+                                                    setShowManualInput(false);
+                                                    setManualUrl('');
+                                                    setManualTitle('');
+                                                }}
+                                                className="px-2 py-2 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors shrink-0"
+                                            >
+                                                <XCircle className="w-4 h-4" />
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="flex-1 overflow-hidden">
+                            {downloads.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center text-center p-8">
+                                    <div className="bg-muted p-3 rounded-full mb-3">
+                                        <Inbox className="w-6 h-6 text-muted-foreground" />
+                                    </div>
+                                    <h3 className="text-base font-medium">No downloads yet</h3>
+                                    <p className="text-sm text-muted-foreground max-w-sm mt-1">
+                                        Send videos from the Chrome Extension to start downloading them directly to your PC.
+                                    </p>
+                                </div>
+                            ) : (
+                                <ScrollArea className="h-full">
+                                    <div className="p-4 space-y-2">
+                                        {downloads.map(dl => (
+                                            <DownloadCard 
+                                                key={dl.id} 
+                                                item={dl} 
+                                                logCount={downloadLogs[dl.id]?.length || 0}
+                                                probeInfo={probes[dl.id]}
+                                                onViewLogs={() => setLogModalItem(dl.id)}
+                                                onDelete={() => setItemToDelete(dl.id)}
+                                                onOpenFormats={() => openFormatModal({ id: dl.id, url: dl.url, title: dl.title })}
+                                            />
+                                        ))}
+                                    </div>
+                                </ScrollArea>
+                            )}
+                        </Card>
+                    </div>
+
+                    <div className={`flex-1 flex flex-col min-h-0 ${activeTab === "settings" ? "" : "hidden"}`}>
                         <SettingsView config={config} onChange={handleConfigChange} />
-                    )}
+                    </div>
                 </div>
 
                 {/* Terminal Pane */}
                 {showTerminal && (
-                    <div className="h-1/2 border-t bg-black w-full flex flex-col shrink-0">
-                        <div className="flex items-center justify-between px-4 py-2 border-b bg-card">
-                            <div className="flex items-center gap-2 text-zinc-400">
-                                <Terminal className="w-3.5 h-3.5" />
-                                <span className="text-xs font-medium">Live Logs</span>
-                            </div>
-                            <button onClick={() => setLogs([])} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
-                                Clear
-                            </button>
+                    <div 
+                        style={{ height: `${terminalHeight}px` }}
+                        className="border-t border-zinc-800 bg-zinc-950 w-full flex flex-col shrink-0 relative"
+                    >
+                        {/* Drag handle for resizing height */}
+                        <div 
+                            onMouseDown={(e) => {
+                                e.preventDefault();
+                                const startY = e.clientY;
+                                const startH = terminalHeight;
+                                const onMouseMove = (moveEvt: MouseEvent) => {
+                                    const deltaY = startY - moveEvt.clientY;
+                                    const newH = Math.min(Math.max(startH + deltaY, 120), window.innerHeight - 150);
+                                    setTerminalHeight(newH);
+                                };
+                                const onMouseUp = () => {
+                                    window.removeEventListener('mousemove', onMouseMove);
+                                    window.removeEventListener('mouseup', onMouseUp);
+                                };
+                                window.addEventListener('mousemove', onMouseMove);
+                                window.addEventListener('mouseup', onMouseUp);
+                            }}
+                            className="h-1.5 w-full bg-zinc-900 hover:bg-emerald-500/60 cursor-ns-resize transition-colors flex items-center justify-center group shrink-0 border-b border-zinc-800/60"
+                            title="Drag to resize console height"
+                        >
+                            <div className="w-10 h-1 rounded-full bg-zinc-700 group-hover:bg-emerald-300 transition-colors" />
                         </div>
-                        <ScrollArea className="flex-1 p-4">
-                            <div className="font-mono text-[11px] leading-tight text-green-400 pb-4">
-                                {logs.map((log, i) => (
-                                    <div key={i} className="whitespace-pre-wrap break-all">{log}</div>
-                                ))}
+
+                        <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/90 border-b border-zinc-800/80">
+                            <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-1.5">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
+                                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
+                                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
+                                </div>
+                                <div className="h-3.5 w-px bg-zinc-700/50" />
+                                <div className="flex items-center gap-2 text-zinc-300">
+                                    <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span className="text-xs font-semibold tracking-wide">Live Console</span>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-mono font-medium">{logs.length} lines</span>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            await navigator.clipboard.writeText(logs.join("\n"));
+                                            setCopiedTerminalLogs(true);
+                                            setTimeout(() => setCopiedTerminalLogs(false), 1500);
+                                        } catch(e) {}
+                                    }}
+                                    className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 px-2.5 py-1 rounded transition-colors"
+                                    title="Copy all live logs"
+                                >
+                                    {copiedTerminalLogs ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                    <span className="font-medium">{copiedTerminalLogs ? "Copied!" : "Copy All"}</span>
+                                </button>
+                                <button 
+                                    onClick={() => setLogs([])} 
+                                    className="text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 px-2.5 py-1 rounded transition-colors font-medium"
+                                >
+                                    Clear
+                                </button>
+                                <button 
+                                    onClick={() => setShowTerminal(false)} 
+                                    className="text-xs text-zinc-400 hover:text-rose-400 hover:bg-zinc-800/80 p-1 rounded transition-colors"
+                                    title="Close Live Console"
+                                >
+                                    <XCircle className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </div>
+                        <ScrollArea className="flex-1 p-3">
+                            <div className="space-y-0.5 pb-4">
+                                {logs.length === 0 ? (
+                                    <div className="text-zinc-600 font-mono text-xs italic py-2">Waiting for console output...</div>
+                                ) : (
+                                    logs.map((log, i) => (
+                                        <TerminalLine key={i} line={log} />
+                                    ))
+                                )}
                                 <div ref={terminalEndRef} />
                             </div>
                         </ScrollArea>
@@ -420,18 +731,37 @@ export default function App() {
                 )}
             </main>
 
-            {/* Modals */}
+            {/* Delete Confirmation Modal */}
             {itemToDelete && (
-                <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-card border shadow-lg rounded-lg max-w-md w-full p-6">
-                        <h3 className="text-base font-semibold mb-2">Delete Confirmation</h3>
-                        <p className="text-muted-foreground text-sm mb-6">
-                            Are you sure you want to permanently delete this item? This action cannot be undone.
+                <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-card border shadow-xl rounded-xl max-w-md w-full p-6">
+                        <h3 className="text-base font-semibold mb-1 flex items-center gap-2">
+                            <Trash2 className="w-5 h-5 text-destructive" />
+                            Delete Download
+                        </h3>
+                        <p className="text-sm text-muted-foreground mb-4">
+                            Are you sure you want to remove <strong className="text-foreground">{downloads.find(d => d.id === itemToDelete)?.title || 'this download'}</strong> from the list?
                         </p>
-                        <div className="flex justify-end gap-3">
+
+                        <label className="flex items-start gap-3 p-3 rounded-lg border bg-muted/40 text-xs cursor-pointer mb-6 hover:bg-muted/70 transition-colors">
+                            <input 
+                                type="checkbox" 
+                                checked={deleteFileFromDisk} 
+                                onChange={(e) => setDeleteFileFromDisk(e.target.checked)}
+                                className="rounded border-input text-destructive focus:ring-destructive mt-0.5 w-4 h-4"
+                            />
+                            <div className="flex flex-col gap-0.5 min-w-0">
+                                <span className="font-semibold text-foreground">Also delete downloaded file from disk</span>
+                                <span className="text-[11px] text-muted-foreground font-mono truncate">
+                                    {downloads.find(d => d.id === itemToDelete)?.destination || 'File in Downloads folder'}
+                                </span>
+                            </div>
+                        </label>
+
+                        <div className="flex justify-end gap-2.5">
                             <button 
                                 onClick={() => setItemToDelete(null)}
-                                className="px-4 py-2 rounded-md hover:bg-muted transition-colors text-sm font-medium"
+                                className="px-4 py-2 rounded-md hover:bg-muted transition-colors text-xs font-medium"
                             >
                                 Cancel
                             </button>
@@ -440,46 +770,279 @@ export default function App() {
                                     const d = downloads.find(x => x.id === itemToDelete);
                                     if (d && (d.status === 'downloading' || d.status === 'pending' || d.status === 'paused')) {
                                         CancelDownload(itemToDelete).catch(console.error);
-                                    } else {
-                                        RemoveDownload(itemToDelete).catch(console.error);
                                     }
+                                    RemoveDownload(itemToDelete, deleteFileFromDisk).catch(console.error);
                                     setItemToDelete(null);
                                 }}
-                                className="px-4 py-2 rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors text-sm font-medium"
+                                className="px-4 py-2 rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors text-xs font-medium"
                             >
-                                Yes, Delete
+                                Delete
                             </button>
                         </div>
                     </div>
                 </div>
             )}
 
+            {/* Process Log Modal */}
             {logModalItem && (
-                <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-card border shadow-lg rounded-lg max-w-2xl w-full flex flex-col h-[60vh]">
-                        <div className="flex items-center justify-between p-4 border-b">
-                            <h3 className="text-base font-semibold flex items-center gap-2">
-                                <Terminal className="w-4 h-4 text-muted-foreground" />
-                                Process Logs
-                            </h3>
-                            <button 
-                                onClick={() => setLogModalItem(null)}
-                                className="p-1 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors"
-                            >
-                                <XCircle className="w-4 h-4" />
-                            </button>
+                <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-zinc-950 border border-zinc-800 shadow-2xl rounded-xl max-w-3xl w-full flex flex-col h-[65vh] overflow-hidden">
+                        <div className="flex items-center justify-between px-5 py-3.5 bg-zinc-900 border-b border-zinc-800">
+                            <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-1.5">
+                                    <div className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
+                                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500/80" />
+                                    <div className="w-2.5 h-2.5 rounded-full bg-emerald-500/80" />
+                                </div>
+                                <div className="h-3.5 w-px bg-zinc-700/50" />
+                                <h3 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+                                    <Terminal className="w-4 h-4 text-emerald-400" />
+                                    Process Log History
+                                </h3>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            const textToCopy = (downloadLogs[logModalItem] || []).join("\n");
+                                            await navigator.clipboard.writeText(textToCopy);
+                                            setCopiedProcessLogs(true);
+                                            setTimeout(() => setCopiedProcessLogs(false), 1500);
+                                        } catch(e) {}
+                                    }}
+                                    className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 px-2.5 py-1 rounded transition-colors"
+                                    title="Copy all process logs"
+                                >
+                                    {copiedProcessLogs ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                    <span className="font-medium">{copiedProcessLogs ? "Copied!" : "Copy All"}</span>
+                                </button>
+                                <button 
+                                    onClick={() => setLogModalItem(null)}
+                                    className="p-1 text-zinc-400 hover:text-zinc-100 rounded-md hover:bg-zinc-800 transition-colors"
+                                >
+                                    <XCircle className="w-4 h-4" />
+                                </button>
+                            </div>
                         </div>
-                        <ScrollArea className="flex-1 p-4 bg-black rounded-b-lg">
-                            <div className="font-mono text-[11px] leading-tight text-zinc-300 pb-4">
+                        <ScrollArea className="flex-1 p-4 bg-zinc-950">
+                            <div className="space-y-0.5 pb-4">
                                 {(downloadLogs[logModalItem] || []).length === 0 ? (
-                                    <div className="text-zinc-500">No logs collected for this download yet.</div>
+                                    <div className="text-zinc-600 italic font-mono text-xs p-2">No logs collected for this download yet.</div>
                                 ) : (
                                     (downloadLogs[logModalItem] || []).map((log, i) => (
-                                        <div key={i} className="whitespace-pre-wrap break-all border-b border-zinc-800/50 py-1">{log}</div>
+                                        <TerminalLine key={i} line={log} />
                                     ))
                                 )}
                             </div>
                         </ScrollArea>
+                    </div>
+                </div>
+            )}
+
+            {/* YouTube Format List (-F) Modal */}
+            {formatModalTarget && (
+                <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="bg-card border shadow-2xl rounded-xl max-w-4xl w-full flex flex-col h-[80vh] overflow-hidden">
+                        <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
+                            <div>
+                                <h3 className="text-base font-semibold flex items-center gap-2">
+                                    <SlidersHorizontal className="w-5 h-5 text-orange-500" />
+                                    YouTube Formats (yt-dlp -F)
+                                </h3>
+                                <p className="text-xs text-muted-foreground truncate max-w-xl mt-0.5" title={formatModalTarget.title || formatModalTarget.url}>
+                                    {formatModalTarget.title || formatModalTarget.url}
+                                </p>
+                            </div>
+                            <button 
+                                onClick={() => setFormatModalTarget(null)}
+                                className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted transition-colors"
+                            >
+                                <XCircle className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Top Filters & Controls */}
+                        <div className="flex flex-col gap-2.5 px-6 py-3 border-b bg-card">
+                            {/* Presets */}
+                            <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-semibold text-muted-foreground mr-1">Quick Presets:</span>
+                                <button
+                                    onClick={() => setSelectedFormatId('bestvideo+bestaudio/best')}
+                                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${selectedFormatId === 'bestvideo+bestaudio/best' ? 'bg-orange-500 text-white border-orange-500' : 'bg-muted/40 hover:bg-muted text-foreground'}`}
+                                >
+                                    🌟 Best Available (Auto Video + Audio)
+                                </button>
+                                <button
+                                    onClick={() => setSelectedFormatId('bestvideo[height<=1080]+bestaudio/best')}
+                                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${selectedFormatId === 'bestvideo[height<=1080]+bestaudio/best' ? 'bg-orange-500 text-white border-orange-500' : 'bg-muted/40 hover:bg-muted text-foreground'}`}
+                                >
+                                    🎬 1080p Max + Audio
+                                </button>
+                                <button
+                                    onClick={() => setSelectedFormatId('bestaudio/best')}
+                                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${selectedFormatId === 'bestaudio/best' ? 'bg-orange-500 text-white border-orange-500' : 'bg-muted/40 hover:bg-muted text-foreground'}`}
+                                >
+                                    🎵 Best Audio Only
+                                </button>
+                                <button
+                                    onClick={() => setSelectedFormatId('18')}
+                                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${selectedFormatId === '18' ? 'bg-orange-500 text-white border-orange-500' : 'bg-muted/40 hover:bg-muted text-foreground'}`}
+                                >
+                                    📱 360p Single File
+                                </button>
+                            </div>
+
+                            {/* Category Filter & Checkbox */}
+                            <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border/40">
+                                <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-lg">
+                                    <button
+                                        onClick={() => setFormatCategory('all')}
+                                        className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${formatCategory === 'all' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                                    >
+                                        All ({formatsList.length})
+                                    </button>
+                                    <button
+                                        onClick={() => setFormatCategory('combined')}
+                                        className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${formatCategory === 'combined' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                                    >
+                                        Combined Streams
+                                    </button>
+                                    <button
+                                        onClick={() => setFormatCategory('video')}
+                                        className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${formatCategory === 'video' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                                    >
+                                        Video Streams
+                                    </button>
+                                    <button
+                                        onClick={() => setFormatCategory('audio')}
+                                        className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${formatCategory === 'audio' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                                    >
+                                        Audio Streams
+                                    </button>
+                                </div>
+
+                                <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={autoAppendAudio} 
+                                        onChange={(e) => setAutoAppendAudio(e.target.checked)}
+                                        className="rounded border-input text-orange-500 focus:ring-orange-500"
+                                    />
+                                    <span>Auto-append <code className="text-orange-500 font-mono">+bestaudio</code> to Video streams</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        {/* Content Area */}
+                        <div className="flex-1 overflow-auto p-4 bg-muted/10">
+                            {formatLoading ? (
+                                <div className="h-full flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                                    <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
+                                    <span className="text-sm font-medium">Extracting available formats using yt-dlp...</span>
+                                </div>
+                            ) : formatError ? (
+                                <div className="h-full flex flex-col items-center justify-center text-destructive p-6 text-center">
+                                    <XCircle className="w-10 h-10 mb-2" />
+                                    <span className="font-semibold text-sm">Failed to fetch formats</span>
+                                    <span className="text-xs text-muted-foreground max-w-md mt-1">{formatError}</span>
+                                </div>
+                            ) : filteredFormats.length === 0 ? (
+                                <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
+                                    No formats matching current filter.
+                                </div>
+                            ) : (
+                                <table className="w-full text-left border-collapse text-xs font-mono">
+                                    <thead>
+                                        <tr className="border-b bg-muted/40 text-muted-foreground font-sans">
+                                            <th className="p-2.5 w-10">Select</th>
+                                            {renderFormatSortHeader("ID", "formatId")}
+                                            {renderFormatSortHeader("EXT", "ext")}
+                                            {renderFormatSortHeader("RESOLUTION", "resolution")}
+                                            {renderFormatSortHeader("FPS", "fps")}
+                                            {renderFormatSortHeader("FILESIZE", "filesize")}
+                                            {renderFormatSortHeader("TBR", "tbr")}
+                                            {renderFormatSortHeader("VCODEC", "vcodec")}
+                                            {renderFormatSortHeader("ACODEC", "acodec")}
+                                            {renderFormatSortHeader("NOTE", "formatNote")}
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-border">
+                                        {sortedFormats.map((f) => {
+                                            const isSelected = selectedFormatId === f.formatId;
+                                            const isVideoOnly = f.vcodec !== 'none' && f.vcodec !== '' && (f.acodec === 'none' || f.acodec === '');
+                                            const isAudioOnly = (f.vcodec === 'none' || f.vcodec === '') && f.acodec !== 'none' && f.acodec !== '';
+
+                                            return (
+                                                <tr 
+                                                    key={f.formatId}
+                                                    onClick={() => setSelectedFormatId(f.formatId)}
+                                                    className={`cursor-pointer transition-colors ${isSelected ? 'bg-orange-500/10 dark:bg-orange-500/20 font-semibold' : 'hover:bg-muted/50'}`}
+                                                >
+                                                    <td className="p-2.5 text-center">
+                                                        <input 
+                                                            type="radio" 
+                                                            name="yt_format" 
+                                                            checked={isSelected}
+                                                            onChange={() => setSelectedFormatId(f.formatId)}
+                                                            className="text-orange-500 focus:ring-orange-500"
+                                                        />
+                                                    </td>
+                                                    <td className="p-2.5 font-bold text-orange-600 dark:text-orange-400">{f.formatId}</td>
+                                                    <td className="p-2.5">{f.ext}</td>
+                                                    <td className="p-2.5">
+                                                        {f.resolution}
+                                                        {isVideoOnly && (
+                                                            <Badge variant="outline" className="ml-1 text-[9px] py-0 px-1 text-blue-500 border-blue-500/30">
+                                                                {autoAppendAudio ? 'video + audio' : 'video only'}
+                                                            </Badge>
+                                                        )}
+                                                        {isAudioOnly && <Badge variant="outline" className="ml-1 text-[9px] py-0 px-1 text-green-500 border-green-500/30">audio</Badge>}
+                                                    </td>
+                                                    <td className="p-2.5">{f.fps > 0 ? f.fps : '-'}</td>
+                                                    <td className="p-2.5">{formatBytes(f.filesize)}</td>
+                                                    <td className="p-2.5">{f.tbr > 0 ? `${f.tbr.toFixed(0)}k` : '-'}</td>
+                                                    <td className="p-2.5 text-muted-foreground max-w-[120px] truncate" title={f.vcodec}>{f.vcodec}</td>
+                                                    <td className="p-2.5 text-muted-foreground max-w-[120px] truncate" title={f.acodec}>{f.acodec}</td>
+                                                    <td className="p-2.5 text-muted-foreground">{f.formatNote || '-'}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+
+                        {/* Footer Controls */}
+                        <div className="flex items-center justify-between px-6 py-4 border-t bg-card">
+                            <div className="text-xs text-muted-foreground">
+                                {selectedFormatId ? (
+                                    <span>
+                                        Selected Format: <strong className="text-orange-500 font-mono">{selectedFormatId}</strong>
+                                        {autoAppendAudio && formatsList.find(f => f.formatId === selectedFormatId)?.vcodec !== 'none' && formatsList.find(f => f.formatId === selectedFormatId)?.acodec === 'none' && (
+                                            <span className="text-blue-500 font-medium"> (+bestaudio auto-merged into MP4)</span>
+                                        )}
+                                    </span>
+                                ) : (
+                                    <span>Click on a format row or preset above to select</span>
+                                )}
+                            </div>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setFormatModalTarget(null)}
+                                    className="px-4 py-2 rounded-md hover:bg-muted text-xs font-medium transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={applySelectedFormat}
+                                    disabled={!selectedFormatId}
+                                    className="px-4 py-2 rounded-md bg-orange-600 text-white hover:bg-orange-500 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                                >
+                                    <Check className="w-4 h-4" />
+                                    Start Download
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
@@ -576,10 +1139,11 @@ function SettingsView({ config, onChange }: { config: AppConfig | null, onChange
     );
 }
 
-function DownloadCard({ item, logCount = 0, probeInfo, onViewLogs, onDelete }: { item: DownloadItem, logCount?: number, probeInfo?: ProbeInfo, onViewLogs?: () => void, onDelete?: () => void }) {
+function DownloadCard({ item, logCount = 0, probeInfo, onViewLogs, onDelete, onOpenFormats }: { item: DownloadItem, logCount?: number, probeInfo?: ProbeInfo, onViewLogs?: () => void, onDelete?: () => void, onOpenFormats?: () => void }) {
     const filename = getFilenameFromUrl(item.url);
     const [expanded, setExpanded] = useState(false);
     const [stats, setStats] = useState({ avgSpeed: '', duration: '' });
+    const isYouTube = isYouTubeUrl(item.url);
     
     let badgeVariant: "default" | "secondary" | "destructive" | "outline" = "secondary";
     let statusText = item.status;
@@ -648,9 +1212,16 @@ function DownloadCard({ item, logCount = 0, probeInfo, onViewLogs, onDelete }: {
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
                             <h4 className="font-medium text-sm truncate pr-4" title={item.url}>{item.title || filename}</h4>
-                            <Badge variant={badgeVariant} className="text-[10px] shrink-0">
-                                {statusText}
-                            </Badge>
+                            <div className="flex items-center gap-1.5">
+                                {item.formatId && (
+                                    <Badge variant="outline" className="text-[10px] shrink-0 border-orange-500/50 text-orange-600 dark:text-orange-400 font-mono">
+                                        -f {item.formatId}
+                                    </Badge>
+                                )}
+                                <Badge variant={badgeVariant} className="text-[10px] shrink-0">
+                                    {statusText}
+                                </Badge>
+                            </div>
                         </div>
                         <div className="flex items-center gap-2 mt-1">
                             <Badge variant="secondary" className="text-[10px] h-5 px-1.5">
@@ -684,9 +1255,28 @@ function DownloadCard({ item, logCount = 0, probeInfo, onViewLogs, onDelete }: {
                                 </>
                             )}
                         </div>
+                        {item.statusMsg && (
+                            <div className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground/80 font-mono italic">
+                                {item.status === 'downloading' && (
+                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse shrink-0"></span>
+                                )}
+                                <span className="truncate">{item.statusMsg}</span>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex items-center gap-1">
+                        {isYouTube && (
+                            <button
+                                onClick={onOpenFormats}
+                                className="p-1.5 text-orange-600 dark:text-orange-400 hover:bg-orange-500/10 rounded-md transition-colors flex items-center gap-1 text-xs font-medium"
+                                title="Inspect & Change YouTube Formats (-F)"
+                            >
+                                <ListFilter className="w-4 h-4" />
+                                <span className="hidden sm:inline">Format</span>
+                            </button>
+                        )}
+
                         <button 
                             onClick={() => setExpanded(!expanded)}
                             className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
@@ -787,9 +1377,30 @@ function DownloadCard({ item, logCount = 0, probeInfo, onViewLogs, onDelete }: {
             </CardContent>
 
             {/* Collapsible Chart Area */}
-            <div className={`transition-all duration-300 ease-in-out overflow-hidden border-t ${expanded ? 'h-[200px] opacity-100' : 'h-0 opacity-0'}`}>
-                <SpeedChart speedStr={item.speed} isDownloading={item.status === 'downloading'} onStatsUpdate={(avg, dur) => setStats({ avgSpeed: avg, duration: dur })} />
-            </div>
+            {expanded && (
+                <div className="h-[200px] border-t bg-muted/10">
+                    <SpeedChart 
+                        speedStr={item.speed} 
+                        downloadedSize={item.downloadedSize}
+                        totalSize={item.totalSize || item.size}
+                        progress={progress}
+                        isDownloading={item.status === 'downloading'} 
+                        onStatsUpdate={(avg, dur) => setStats({ avgSpeed: avg, duration: dur })} 
+                    />
+                </div>
+            )}
+            {!expanded && item.status === 'downloading' && (
+                <div className="hidden">
+                    <SpeedChart 
+                        speedStr={item.speed} 
+                        downloadedSize={item.downloadedSize}
+                        totalSize={item.totalSize || item.size}
+                        progress={progress}
+                        isDownloading={true} 
+                        onStatsUpdate={(avg, dur) => setStats({ avgSpeed: avg, duration: dur })} 
+                    />
+                </div>
+            )}
         </Card>
     );
 }

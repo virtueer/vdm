@@ -12,7 +12,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -75,12 +77,20 @@ func getFallbackReferer(downloadUrl string) string {
 	return fmt.Sprintf("%s://%s/", u.Scheme, u.Host)
 }
 
-// Fixed regex: ~?\s* (multiple spaces after tilde) and allow both KiB/s and MiB/s
-var ytdlpRegex = regexp.MustCompile(`\[download\]\s+(?P<percent>[\d\.]+)%\s+of\s+~?\s*(?P<size>[\d\.]+\s*\w+)\s+at\s+(?P<speed>[\d\.]+\s*\w+/s)`)
-var aria2cRegex = regexp.MustCompile(`\[#[^\]]+\]\s+(\S+)/(\S+)\s+\((\d+)%\).*DL:(\S+)`)
+func getDownloadDir() string {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, "Downloads")
+	os.MkdirAll(dir, 0755)
+	return dir
+}
+
+var ansiRegex = regexp.MustCompile(`\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\([a-zA-Z]|\)]|[0-9A-Za-z=><])`)
+var ytdlpRegex = regexp.MustCompile(`\[download\]\s+([\d\.]+)%\s+of\s+~?\s*([\d\.]+\s*\w+)(?:.*?\s+at\s+([\d\.]+\s*\w+))?`)
+var aria2cRegex = regexp.MustCompile(`\[#[a-fA-F0-9]+\s+([\d\.]+\s*\w+)/([\d\.]+\s*\w+)\s*\(([\d\.]+)%\)(?:.*?\s+DL:([\d\.]+\s*\w+))?`)
 var ytDlpDestRegex = regexp.MustCompile(`\[download\] Destination: (.*)`)
 var ytDlpAlreadyDestRegex = regexp.MustCompile(`\[download\] (.*) has already been downloaded`)
 var ytDlpMergerRegex = regexp.MustCompile(`\[Merger\] Merging formats into "(.*)"`)
+var ytDlpMoveFilesRegex = regexp.MustCompile(`\[MoveFiles\] Moving file .*? to "(.*)"`)
 
 // ServerProbeResult holds the results of probing a server
 type ServerProbeResult struct {
@@ -235,41 +245,127 @@ func (a *App) decideThreads(probe *ServerProbeResult, baseThreads int) int {
 
 // isProgressLine returns true if the line contains download progress info (regex match)
 func isProgressLine(line string) bool {
-	return ytdlpRegex.MatchString(line) || aria2cRegex.MatchString(line)
+	clean := ansiRegex.ReplaceAllString(line, "")
+	clean = strings.TrimSpace(clean)
+	if strings.HasPrefix(clean, "*** Download Progress Summary") || 
+	   strings.HasPrefix(clean, "===") || 
+	   strings.HasPrefix(clean, "---") || 
+	   strings.HasPrefix(clean, "FILE:") {
+		return true
+	}
+	return ytdlpRegex.MatchString(clean) || aria2cRegex.MatchString(clean)
+}
+
+func parseSizeToBytes(sizeStr string) int64 {
+	clean := strings.TrimSpace(sizeStr)
+	var val float64
+	var unit string
+	n, _ := fmt.Sscanf(clean, "%f%s", &val, &unit)
+	if n < 1 || val <= 0 {
+		return 0
+	}
+	unit = strings.ToUpper(unit)
+	if strings.HasPrefix(unit, "G") {
+		return int64(val * 1024 * 1024 * 1024)
+	}
+	if strings.HasPrefix(unit, "M") {
+		return int64(val * 1024 * 1024)
+	}
+	if strings.HasPrefix(unit, "K") {
+		return int64(val * 1024)
+	}
+	if strings.HasPrefix(unit, "B") {
+		return int64(val)
+	}
+	return int64(val * 1024 * 1024)
 }
 
 func (a *App) parseProgressLine(id string, line string, lastEmitMs *int64) bool {
-	isProgress := isProgressLine(line)
+	cleanLine := ansiRegex.ReplaceAllString(line, "")
+	cleanLine = strings.TrimSpace(cleanLine)
+	isProgress := isProgressLine(cleanLine)
 	if !isProgress {
 		return false
 	}
 
-	// Throttle event emission to at most 2 per second to avoid flooding UI
+	// Throttle event emission to at most 4 per second (250ms) to avoid flooding UI while keeping progress smooth
 	now := time.Now().UnixMilli()
 	last := atomic.LoadInt64(lastEmitMs)
-	if now-last < 500 {
+	if now-last < 250 {
 		return true // it IS a progress line, but we skip emitting
 	}
 	atomic.StoreInt64(lastEmitMs, now)
 
-	if match := ytdlpRegex.FindStringSubmatch(line); match != nil {
-		if a.wailsApp != nil {
-			a.wailsApp.Event.Emit("download_progress", map[string]interface{}{
-				"id":         id,
-				"percentage": strings.TrimSpace(match[1]),
-				"total":      strings.TrimSpace(match[2]),
-				"speed":      strings.TrimSpace(match[3]),
-			})
+	var pctStr, downloadedStr, totalStr, speedStr string
+
+	if match := ytdlpRegex.FindStringSubmatch(cleanLine); match != nil {
+		pctStr = strings.TrimSpace(match[1])
+		totalStr = strings.TrimSpace(match[2])
+		if len(match) > 3 {
+			speedStr = strings.TrimSpace(match[3])
 		}
-	} else if match := aria2cRegex.FindStringSubmatch(line); match != nil {
+	} else if match := aria2cRegex.FindStringSubmatch(cleanLine); match != nil {
+		downloadedStr = strings.TrimSpace(match[1])
+		totalStr = strings.TrimSpace(match[2])
+		pctStr = strings.TrimSpace(match[3])
+		if len(match) > 4 {
+			speedStr = strings.TrimSpace(match[4])
+			if speedStr != "" && !strings.HasSuffix(speedStr, "/s") && !strings.HasSuffix(speedStr, "/S") {
+				speedStr = speedStr + "/s"
+			}
+		}
+	}
+
+	if downloadedStr != "" && totalStr != "" {
+		dlB := parseSizeToBytes(downloadedStr)
+		totB := parseSizeToBytes(totalStr)
+		if totB > 0 && dlB >= 0 {
+			calcPct := (float64(dlB) / float64(totB)) * 100.0
+			if calcPct >= 0 && calcPct <= 100 {
+				pctStr = fmt.Sprintf("%.1f", calcPct)
+			}
+		}
+	}
+
+	if pctStr != "" {
+		pctFloat, err := strconv.ParseFloat(pctStr, 64)
+		a.mu.Lock()
+		for i, item := range a.downloads {
+			if item.ID == id {
+				if err == nil {
+					a.downloads[i].Progress = pctFloat
+				}
+				if a.downloads[i].StatusMsg == "" || a.downloads[i].StatusMsg == "Writing temporary cookies..." {
+					a.downloads[i].StatusMsg = "Downloading..."
+				}
+				if speedStr != "" {
+					a.downloads[i].Speed = speedStr
+				}
+				if downloadedStr != "" {
+					a.downloads[i].DownloadedSize = downloadedStr
+				}
+				if totalStr != "" {
+					a.downloads[i].TotalSize = totalStr
+				}
+				if a.wailsApp != nil {
+					a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+				}
+				break
+			}
+		}
+		a.mu.Unlock()
+
 		if a.wailsApp != nil {
-			a.wailsApp.Event.Emit("download_progress", map[string]interface{}{
+			payload := map[string]interface{}{
 				"id":         id,
-				"downloaded": strings.TrimSpace(match[1]),
-				"total":      strings.TrimSpace(match[2]),
-				"percentage": strings.TrimSpace(match[3]),
-				"speed":      strings.TrimSpace(match[4]),
-			})
+				"percentage": pctStr,
+				"total":      totalStr,
+				"speed":      speedStr,
+			}
+			if downloadedStr != "" {
+				payload["downloaded"] = downloadedStr
+			}
+			a.wailsApp.Event.Emit("download_progress", payload)
 		}
 	}
 	return true
@@ -328,12 +424,13 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			threads := fmt.Sprintf("%d", GlobalConfig.ConcurrentFragments)
 			
 			outName := "%(title)s.%(ext)s"
-			if itemTitle != "" {
-				// Even for YouTube, if we have a title, we could hint it, but yt-dlp 
-				// usually extracts a much better title. Still, let's keep %(title)s.
-				// However, if the user explicitly wants the captured title:
-				// outName = sanitizeFilename(itemTitle) + ".%(ext)s"
-				// Let's stick to yt-dlp's title for YouTube because it's reliable.
+			
+			var formatId string
+			for _, item := range a.downloads {
+				if item.ID == id {
+					formatId = item.FormatID
+					break
+				}
 			}
 
 			args := []string{
@@ -343,10 +440,15 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				"-o", outName,
 				"--js-runtimes", "node",
 				"--downloader", aria2cPath, 
-				"--downloader-args", fmt.Sprintf("aria2c:-x %s -s %s -k 1M --file-allocation=none", threads, threads),
+				"--downloader-args", fmt.Sprintf("aria2c:-x %s -s %s -k 1M --min-split-size=1M --file-allocation=none --summary-interval=1", threads, threads),
 				"--retry-sleep", "fragment:2",
 				"--retry-sleep", "http:2",
 			}
+
+			if formatId != "" {
+				args = append(args, "-f", formatId)
+			}
+
 			if itemPageUrl != "" {
 				args = append(args, "--referer", itemPageUrl)
 			}
@@ -481,8 +583,9 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				"-s", threadsStr,
 				"-k", "1M",
 				"--file-allocation=none",
-			"--max-tries-wait=5",
-			"--retry-wait=3",
+				"--max-tries=5",
+				"--retry-wait=3",
+				"--summary-interval=1",
 				"-d", downloadPath,
 				"-o", filename,
 			}
@@ -499,6 +602,7 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			cmd = exec.CommandContext(ctx, GetDependencyPath("aria2c"), args...)
 		}
 
+		cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
 		a.Logf("Executing command: %s %s\n", cmd.Path, strings.Join(cmd.Args, " "))
 
 		stdout, err := cmd.StdoutPipe()
@@ -519,6 +623,7 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			for i, item := range a.downloads {
 				if item.ID == id {
 					a.downloads[i].Status = "error"
+					a.downloads[i].StatusMsg = "Failed to start command"
 					if a.wailsApp != nil {
 						a.wailsApp.Event.Emit("download_updated", a.downloads[i])
 					}
@@ -545,18 +650,78 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 
 		var lastEmitMs int64
 
+		extractStatusMsg := func(text string) string {
+			if strings.HasPrefix(text, "[youtube]") {
+				parts := strings.SplitN(text, ":", 2)
+				if len(parts) > 1 {
+					return strings.TrimSpace(parts[1])
+				}
+				return text
+			}
+			if strings.HasPrefix(text, "[info]") {
+				parts := strings.SplitN(text, ":", 2)
+				if len(parts) > 1 {
+					return strings.TrimSpace(parts[1])
+				}
+				return text
+			}
+			if strings.HasPrefix(text, "[download] Destination:") {
+				return "Downloading..."
+			}
+			if strings.HasPrefix(text, "[download] Writing temporary cookies") {
+				return "Writing temporary cookies..."
+			}
+			if strings.HasPrefix(text, "[Fixup") {
+				return "Fixing media container..."
+			}
+			if strings.HasPrefix(text, "[MoveFiles]") {
+				return "Moving file to Downloads..."
+			}
+			if strings.HasPrefix(text, "[Merger]") {
+				return "Merging audio & video..."
+			}
+			return ""
+		}
+
+		updateItemStatusMsg := func(stMsg string) {
+			if stMsg == "" {
+				return
+			}
+			a.mu.Lock()
+			for i, item := range a.downloads {
+				if item.ID == id {
+					if a.downloads[i].StatusMsg != stMsg {
+						a.downloads[i].StatusMsg = stMsg
+						if a.wailsApp != nil {
+							a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+						}
+					}
+					break
+				}
+			}
+			a.mu.Unlock()
+		}
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+
 		go func() {
+			defer wg.Done()
 			scanner := bufio.NewScanner(stdout)
 			scanner.Split(splitCRLF)
 			for scanner.Scan() {
 				text := strings.TrimSpace(scanner.Text())
+				text = ansiRegex.ReplaceAllString(text, "")
+				text = strings.TrimSpace(text)
 				if text == "" {
 					continue
 				}
 				
 				// Capture actual output file path from yt-dlp
 				var destFile string
-				if match := ytDlpDestRegex.FindStringSubmatch(text); match != nil {
+				if match := ytDlpMoveFilesRegex.FindStringSubmatch(text); match != nil {
+					destFile = strings.TrimSpace(match[1])
+				} else if match := ytDlpDestRegex.FindStringSubmatch(text); match != nil {
 					destFile = strings.TrimSpace(match[1])
 				} else if match := ytDlpAlreadyDestRegex.FindStringSubmatch(text); match != nil {
 					destFile = strings.TrimSpace(match[1])
@@ -588,11 +753,15 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				isProgress := a.parseProgressLine(id, text, &lastEmitMs)
 				// Only log non-progress lines to avoid flooding
 				if !isProgress {
+					ts := time.Now().Format("15:04:05")
+					logMsg := fmt.Sprintf("[%s] %s", ts, text)
 					a.Logf("%s\n", text)
+					a.SaveDownloadLog(id, logMsg)
+					updateItemStatusMsg(extractStatusMsg(text))
 					if a.wailsApp != nil {
 						a.wailsApp.Event.Emit("download_log", map[string]string{
 							"id":      id,
-							"message": text,
+							"message": logMsg,
 						})
 					}
 				}
@@ -600,10 +769,13 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 		}()
 
 		go func() {
+			defer wg.Done()
 			scanner := bufio.NewScanner(stderr)
 			scanner.Split(splitCRLF)
 			for scanner.Scan() {
 				text := strings.TrimSpace(scanner.Text())
+				text = ansiRegex.ReplaceAllString(text, "")
+				text = strings.TrimSpace(text)
 				if text == "" {
 					continue
 				}
@@ -611,11 +783,15 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				isProgress := a.parseProgressLine(id, text, &lastEmitMs)
 				// Skip repetitive 429 retry lines and progress lines from the terminal log
 				if !isProgress && !strings.Contains(text, "Retrying fragment") {
+					ts := time.Now().Format("15:04:05")
+					logMsg := fmt.Sprintf("[%s] %s", ts, text)
 					a.Logf("%s\n", text)
+					a.SaveDownloadLog(id, logMsg)
+					updateItemStatusMsg(extractStatusMsg(text))
 					if a.wailsApp != nil {
 						a.wailsApp.Event.Emit("download_log", map[string]string{
 							"id":      id,
-							"message": text,
+							"message": logMsg,
 						})
 					}
 				}
@@ -623,6 +799,7 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 		}()
 
 		err = cmd.Wait()
+		wg.Wait()
 
 		// Find index again as the array might have been modified
 		itemIndex := -1
@@ -642,9 +819,35 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			if err != nil {
 				a.Logf("Download error for %s: %v\n", downloadUrl, err)
 				a.downloads[itemIndex].Status = "error"
+				a.downloads[itemIndex].StatusMsg = fmt.Sprintf("Error: %v", err)
 			} else {
 				a.Logf("Download completed for %s\n", downloadUrl)
 				a.downloads[itemIndex].Status = "completed"
+				a.downloads[itemIndex].StatusMsg = "Completed"
+
+				// Ensure destination points to final file in Downloads folder
+				dest := a.downloads[itemIndex].Destination
+				downloadDir := getDownloadDir()
+				if dest == "" || strings.Contains(dest, ".vdm/temp") {
+					baseName := filepath.Base(dest)
+					if baseName == "" || baseName == "." {
+						baseName = sanitizeFilename(a.downloads[itemIndex].Title) + ".mp4"
+					}
+					finalPath := filepath.Join(downloadDir, baseName)
+					if _, statErr := os.Stat(finalPath); statErr == nil {
+						a.downloads[itemIndex].Destination = finalPath
+					} else {
+						// Look for any matching file in Downloads dir
+						files, _ := os.ReadDir(downloadDir)
+						stem := strings.TrimSuffix(baseName, filepath.Ext(baseName))
+						for _, f := range files {
+							if stem != "" && strings.HasPrefix(f.Name(), stem) {
+								a.downloads[itemIndex].Destination = filepath.Join(downloadDir, f.Name())
+								break
+							}
+						}
+					}
+				}
 			}
 
 			if a.wailsApp != nil {

@@ -1,14 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,30 +20,69 @@ import (
 )
 
 type DownloadItem struct {
-	ID          string `json:"id"`
-	URL         string `json:"url"`
-	Type        string `json:"type"`
-	Size        string `json:"size"`
-	Status      string `json:"status"` // "pending", "downloading", "paused", "completed", "error", "cancelled"
-	PageURL     string `json:"pageUrl"`
-	Destination string `json:"destination,omitempty"` // The path to the file on disk
-	Title       string `json:"title"`
+	ID             string  `json:"id"`
+	URL            string  `json:"url"`
+	Type           string  `json:"type"`
+	Size           string  `json:"size"`
+	Status         string  `json:"status"` // "pending", "downloading", "paused", "completed", "error", "cancelled"
+	PageURL        string  `json:"pageUrl"`
+	Destination    string  `json:"destination,omitempty"` // The path to the file on disk
+	Title          string  `json:"title"`
+	FormatID       string  `json:"formatId,omitempty"`  // Selected format ID e.g. "137+bestaudio" or "140"
+	StatusMsg      string  `json:"statusMsg,omitempty"` // Short live status line e.g. "Downloading webpage", "Moving file..."
+	Progress       float64 `json:"progress,omitempty"`
+	Speed          string  `json:"speed,omitempty"`
+	DownloadedSize string  `json:"downloadedSize,omitempty"`
+	TotalSize      string  `json:"totalSize,omitempty"`
+}
+
+type YouTubeFormat struct {
+	FormatID   string  `json:"formatId"`
+	Ext        string  `json:"ext"`
+	Resolution string  `json:"resolution"`
+	FPS        float64 `json:"fps"`
+	Filesize   int64   `json:"filesize"`
+	TBR        float64 `json:"tbr"`
+	VCodec     string  `json:"vcodec"`
+	ACodec     string  `json:"acodec"`
+	FormatNote string  `json:"formatNote"`
+	Format     string  `json:"format"`
+}
+
+type rawYtdlpFormat struct {
+	FormatID       string   `json:"format_id"`
+	Ext            string   `json:"ext"`
+	Resolution     string   `json:"resolution"`
+	FPS            *float64 `json:"fps"`
+	Filesize       *int64   `json:"filesize"`
+	FilesizeApprox *int64   `json:"filesize_approx"`
+	TBR            *float64 `json:"tbr"`
+	VCodec         string   `json:"vcodec"`
+	ACodec         string   `json:"acodec"`
+	FormatNote     string   `json:"format_note"`
+	Format         string   `json:"format"`
+}
+
+type rawYtdlpInfo struct {
+	Formats []rawYtdlpFormat `json:"formats"`
 }
 
 type App struct {
-	wailsApp    *application.App
-	mainWindow  *application.WebviewWindow
-	server      *Server
-	downloads   []DownloadItem
-	cancelFuncs map[string]context.CancelFunc
-	mu          sync.Mutex
-	db          *sql.DB
+	wailsApp     *application.App
+	mainWindow   *application.WebviewWindow
+	server       *Server
+	downloads    []DownloadItem
+	cancelFuncs  map[string]context.CancelFunc
+	terminalLogs []string
+	mu           sync.Mutex
+	db           *sql.DB
 }
 
 func NewApp() *App {
 	app := &App{
-		downloads:   []DownloadItem{},
-		cancelFuncs: make(map[string]context.CancelFunc),
+		downloads:    []DownloadItem{},
+		cancelFuncs:   make(map[string]context.CancelFunc),
+		terminalLogs: []string{},
 	}
 	app.initDB()
 	app.loadHistory()
@@ -72,13 +114,38 @@ func (a *App) initDB() {
 		status TEXT,
 		pageUrl TEXT,
 		destination TEXT,
-		title TEXT
+		title TEXT,
+		formatId TEXT,
+		statusMsg TEXT,
+		progress REAL DEFAULT 0,
+		speed TEXT DEFAULT '',
+		downloadedSize TEXT DEFAULT '',
+		totalSize TEXT DEFAULT ''
+	);
+
+	CREATE TABLE IF NOT EXISTS download_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		download_id TEXT,
+		message TEXT
+	);
+
+	CREATE TABLE IF NOT EXISTS terminal_logs (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		message TEXT
 	);
 	`
 	_, err = db.Exec(createTableQuery)
 	if err != nil {
 		log.Fatalf("Failed to create downloads table: %v", err)
 	}
+
+	// Migrate if columns are missing from previous versions
+	db.Exec("ALTER TABLE downloads ADD COLUMN formatId TEXT;")
+	db.Exec("ALTER TABLE downloads ADD COLUMN statusMsg TEXT;")
+	db.Exec("ALTER TABLE downloads ADD COLUMN progress REAL DEFAULT 0;")
+	db.Exec("ALTER TABLE downloads ADD COLUMN speed TEXT DEFAULT '';")
+	db.Exec("ALTER TABLE downloads ADD COLUMN downloadedSize TEXT DEFAULT '';")
+	db.Exec("ALTER TABLE downloads ADD COLUMN totalSize TEXT DEFAULT '';")
 }
 
 func (a *App) loadHistory() {
@@ -86,7 +153,13 @@ func (a *App) loadHistory() {
 		return
 	}
 	
-	rows, err := a.db.Query("SELECT id, url, type, size, status, pageUrl, destination, title FROM downloads")
+	rows, err := a.db.Query(`
+		SELECT id, url, type, size, status, pageUrl, destination, title, 
+		       COALESCE(formatId, ''), COALESCE(statusMsg, ''),
+		       COALESCE(progress, 0), COALESCE(speed, ''),
+		       COALESCE(downloadedSize, ''), COALESCE(totalSize, '')
+		FROM downloads
+	`)
 	if err != nil {
 		a.Logf("Error loading history from sqlite: %v\n", err)
 		return
@@ -96,7 +169,7 @@ func (a *App) loadHistory() {
 	var items []DownloadItem
 	for rows.Next() {
 		var i DownloadItem
-		err = rows.Scan(&i.ID, &i.URL, &i.Type, &i.Size, &i.Status, &i.PageURL, &i.Destination, &i.Title)
+		err = rows.Scan(&i.ID, &i.URL, &i.Type, &i.Size, &i.Status, &i.PageURL, &i.Destination, &i.Title, &i.FormatID, &i.StatusMsg, &i.Progress, &i.Speed, &i.DownloadedSize, &i.TotalSize)
 		if err != nil {
 			a.Logf("Error scanning row: %v\n", err)
 			continue
@@ -105,6 +178,9 @@ func (a *App) loadHistory() {
 		// Reset states: pending or downloading -> paused
 		if i.Status == "downloading" || i.Status == "pending" {
 			i.Status = "paused"
+		} else if i.Status == "completed" {
+			i.Progress = 100
+			i.StatusMsg = "Completed"
 		}
 		
 		items = append(items, i)
@@ -129,13 +205,19 @@ func (a *App) saveHistory() {
 	}
 
 	stmt, err := tx.Prepare(`
-		INSERT INTO downloads (id, url, type, size, status, pageUrl, destination, title) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO downloads (id, url, type, size, status, pageUrl, destination, title, formatId, statusMsg, progress, speed, downloadedSize, totalSize) 
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			status=excluded.status,
 			destination=excluded.destination,
 			title=excluded.title,
-			size=excluded.size
+			size=excluded.size,
+			formatId=excluded.formatId,
+			statusMsg=excluded.statusMsg,
+			progress=excluded.progress,
+			speed=excluded.speed,
+			downloadedSize=excluded.downloadedSize,
+			totalSize=excluded.totalSize
 	`)
 	
 	if err != nil {
@@ -146,7 +228,7 @@ func (a *App) saveHistory() {
 	defer stmt.Close()
 
 	for _, i := range items {
-		_, err = stmt.Exec(i.ID, i.URL, i.Type, i.Size, i.Status, i.PageURL, i.Destination, i.Title)
+		_, err = stmt.Exec(i.ID, i.URL, i.Type, i.Size, i.Status, i.PageURL, i.Destination, i.Title, i.FormatID, i.StatusMsg, i.Progress, i.Speed, i.DownloadedSize, i.TotalSize)
 		if err != nil {
 			a.Logf("Error executing upsert: %v\n", err)
 		}
@@ -176,25 +258,175 @@ func (a *App) SaveConfig(config AppConfig) {
 }
 
 func (a *App) Logf(format string, args ...interface{}) {
-	msg := fmt.Sprintf(format, args...)
+	timestamp := time.Now().Format("15:04:05")
+	msg := fmt.Sprintf("[%s] ", timestamp) + fmt.Sprintf(format, args...)
 	fmt.Print(msg)
+
+	a.mu.Lock()
+	a.terminalLogs = append(a.terminalLogs, msg)
+	if len(a.terminalLogs) > 2000 {
+		a.terminalLogs = a.terminalLogs[len(a.terminalLogs)-2000:]
+	}
+	a.mu.Unlock()
+
+	if a.db != nil {
+		a.db.Exec("INSERT INTO terminal_logs (message) VALUES (?)", msg)
+	}
+
 	if a.wailsApp != nil {
 		a.wailsApp.Event.Emit("log", msg)
 	}
 }
 
-// AddDownload is called by the server.go when a new download request arrives
-func (a *App) AddDownload(url, typ, size, pageUrl, title string) {
-	a.Logf("New download request: %s (from %s, title: %s)\n", url, pageUrl, title)
+func (a *App) SaveDownloadLog(downloadID string, msg string) {
+	if a.db != nil {
+		a.db.Exec("INSERT INTO download_logs (download_id, message) VALUES (?, ?)", downloadID, msg)
+	}
+}
+
+func (a *App) GetTerminalLogs() []string {
+	if a.db == nil {
+		return a.terminalLogs
+	}
+	rows, err := a.db.Query("SELECT message FROM terminal_logs ORDER BY id DESC LIMIT 500")
+	if err != nil {
+		return a.terminalLogs
+	}
+	defer rows.Close()
+
+	var logs []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err == nil {
+			logs = append(logs, m)
+		}
+	}
+	for i, j := 0, len(logs)-1; i < j; i, j = i+1, j-1 {
+		logs[i], logs[j] = logs[j], logs[i]
+	}
+	return logs
+}
+
+func (a *App) GetDownloadLogs(downloadID string) []string {
+	if a.db == nil {
+		return nil
+	}
+	rows, err := a.db.Query("SELECT message FROM download_logs WHERE download_id = ? ORDER BY id ASC", downloadID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var logs []string
+	for rows.Next() {
+		var m string
+		if err := rows.Scan(&m); err == nil {
+			logs = append(logs, m)
+		}
+	}
+	return logs
+}
+
+// GetYouTubeFormats fetches format list for YouTube videos using yt-dlp --dump-single-json
+func (a *App) GetYouTubeFormats(u string) ([]YouTubeFormat, error) {
+	ytdlpPath := GetDependencyPath("yt-dlp")
+	a.Logf("Fetching YouTube formats for: %s\n", u)
+	cmd := exec.Command(ytdlpPath, "--dump-single-json", "--no-playlist", "--js-runtimes", "node", u)
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+
+	if err := cmd.Run(); err != nil {
+		a.Logf("GetYouTubeFormats error: %v, stderr: %s\n", err, errOut.String())
+		return nil, fmt.Errorf("yt-dlp failed: %w", err)
+	}
+
+	var info rawYtdlpInfo
+	if err := json.Unmarshal(out.Bytes(), &info); err != nil {
+		a.Logf("GetYouTubeFormats JSON parse error: %v\n", err)
+		return nil, fmt.Errorf("failed to parse yt-dlp json: %w", err)
+	}
+
+	var formats []YouTubeFormat
+	for _, f := range info.Formats {
+		size := int64(0)
+		if f.Filesize != nil && *f.Filesize > 0 {
+			size = *f.Filesize
+		} else if f.FilesizeApprox != nil && *f.FilesizeApprox > 0 {
+			size = *f.FilesizeApprox
+		}
+
+		fpsVal := float64(0)
+		if f.FPS != nil {
+			fpsVal = *f.FPS
+		}
+
+		tbrVal := float64(0)
+		if f.TBR != nil {
+			tbrVal = *f.TBR
+		}
+
+		res := f.Resolution
+		if res == "" {
+			if f.VCodec != "none" && f.VCodec != "" {
+				res = "video"
+			} else {
+				res = "audio only"
+			}
+		}
+
+		formats = append(formats, YouTubeFormat{
+			FormatID:   f.FormatID,
+			Ext:        f.Ext,
+			Resolution: res,
+			FPS:        fpsVal,
+			Filesize:   size,
+			TBR:        tbrVal,
+			VCodec:     f.VCodec,
+			ACodec:     f.ACodec,
+			FormatNote: f.FormatNote,
+			Format:     f.Format,
+		})
+	}
+	a.Logf("Found %d formats for %s\n", len(formats), u)
+	return formats, nil
+}
+
+// SetDownloadFormat updates format choice for a download
+func (a *App) SetDownloadFormat(id string, formatId string) {
+	a.mu.Lock()
+	for i, item := range a.downloads {
+		if item.ID == id {
+			a.downloads[i].FormatID = formatId
+			if a.wailsApp != nil {
+				a.wailsApp.Event.Emit("download_updated", a.downloads[i])
+			}
+			break
+		}
+	}
+	a.mu.Unlock()
+	a.saveHistory()
+}
+
+// AddDownload is called by the server.go or frontend when a new download request arrives
+func (a *App) AddDownload(url, typ, size, pageUrl, title, formatId string) {
+	a.Logf("New download request: %s (from %s, title: %s, format: %s)\n", url, pageUrl, title, formatId)
+
+	status := "pending"
+	if isYouTube(url) && formatId == "" {
+		status = "paused"
+	}
 
 	item := DownloadItem{
-		ID:      fmt.Sprintf("%d", time.Now().UnixNano()),
-		URL:     url,
-		Type:    typ,
-		Size:    size,
-		Status:  "pending",
-		PageURL: pageUrl,
-		Title:   title,
+		ID:       fmt.Sprintf("%d", time.Now().UnixNano()),
+		URL:      url,
+		Type:     typ,
+		Size:     size,
+		Status:   status,
+		PageURL:  pageUrl,
+		Title:    title,
+		FormatID: formatId,
 	}
 
 	a.downloads = append(a.downloads, item)
@@ -209,8 +441,10 @@ func (a *App) AddDownload(url, typ, size, pageUrl, title string) {
 		a.mainWindow.Focus()
 	}
 
-	// Auto-start download
-	a.StartDownloadProcess(item.ID, url)
+	// Auto-start download if not waiting for YouTube format selection
+	if !isYouTube(url) || formatId != "" {
+		a.StartDownloadProcess(item.ID, url)
+	}
 }
 
 // GetDownloads is exposed to frontend
@@ -224,13 +458,32 @@ func (a *App) ShowInFolder(id string) {
 	defer a.mu.Unlock()
 	for _, item := range a.downloads {
 		if item.ID == id {
-			if item.Destination != "" {
-				dir := filepath.Dir(item.Destination)
+			dest := item.Destination
+			downloadDir := getDownloadDir()
+			if dest == "" || strings.Contains(dest, ".vdm/temp") {
+				if dest != "" {
+					baseName := filepath.Base(dest)
+					possiblePath := filepath.Join(downloadDir, baseName)
+					if _, err := os.Stat(possiblePath); err == nil {
+						dest = possiblePath
+					} else {
+						dest = downloadDir
+					}
+				} else {
+					dest = downloadDir
+				}
+			}
+
+			if dest != "" {
+				dir := dest
+				if fi, err := os.Stat(dest); err == nil && !fi.IsDir() {
+					dir = filepath.Dir(dest)
+				}
 				switch runtime.GOOS {
 				case "windows":
-					exec.Command("explorer", "/select,", item.Destination).Start()
+					exec.Command("explorer", "/select,", dest).Start()
 				case "darwin":
-					exec.Command("open", "-R", item.Destination).Start()
+					exec.Command("open", "-R", dest).Start()
 				default:
 					exec.Command("xdg-open", dir).Start()
 				}
@@ -264,7 +517,7 @@ func (a *App) PauseDownload(id string) {
 }
 
 // RemoveDownload deletes the download completely from the list and database
-func (a *App) RemoveDownload(id string) {
+func (a *App) RemoveDownload(id string, deleteFile bool) {
 	a.mu.Lock()
 	if cancel, exists := a.cancelFuncs[id]; exists {
 		cancel()
@@ -287,13 +540,24 @@ func (a *App) RemoveDownload(id string) {
 	}
 	a.mu.Unlock()
 
-	// Delete from filesystem
-	if fileToDelete != "" {
+	// Delete from filesystem if deleteFile is true
+	if deleteFile && fileToDelete != "" {
 		a.Logf("Deleting file for removed download: %s\n", fileToDelete)
 		os.Remove(fileToDelete)
 		os.Remove(fileToDelete + ".part")
 		os.Remove(fileToDelete + ".ytdl")
 		os.Remove(fileToDelete + ".aria2")
+
+		// Also check and remove from Downloads folder if fileToDelete was pointing to temp
+		downloadDir := getDownloadDir()
+		baseName := filepath.Base(fileToDelete)
+		if baseName != "" && baseName != "." {
+			finalPath := filepath.Join(downloadDir, baseName)
+			os.Remove(finalPath)
+			os.Remove(finalPath + ".part")
+			os.Remove(finalPath + ".ytdl")
+			os.Remove(finalPath + ".aria2")
+		}
 	}
 
 	// Remove from DB
@@ -302,11 +566,13 @@ func (a *App) RemoveDownload(id string) {
 		if err != nil {
 			a.Logf("Error deleting from db: %v\n", err)
 		}
+		a.db.Exec("DELETE FROM download_logs WHERE download_id = ?", id)
 	}
 
 	if a.wailsApp != nil {
 		a.wailsApp.Event.Emit("download_removed", id)
 	}
+	a.saveHistory()
 }
 
 // ResumeDownload re-starts a paused download

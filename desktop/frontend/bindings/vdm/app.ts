@@ -14,10 +14,10 @@ import * as application$0 from "../github.com/wailsapp/wails/v3/pkg/application/
 import * as $models from "./models.js";
 
 /**
- * AddDownload is called by the server.go when a new download request arrives
+ * AddDownload is called by the server.go or frontend when a new download request arrives
  */
-export function AddDownload(url: string, typ: string, size: string, pageUrl: string, title: string): $CancellablePromise<void> {
-    return $Call.ByID(421089748, url, typ, size, pageUrl, title);
+export function AddDownload(url: string, typ: string, size: string, pageUrl: string, title: string, formatId: string): $CancellablePromise<void> {
+    return $Call.ByID(421089748, url, typ, size, pageUrl, title, formatId);
 }
 
 /**
@@ -31,11 +31,26 @@ export function GetConfig(): $CancellablePromise<$models.AppConfig> {
     return $Call.ByID(1200034045);
 }
 
+export function GetDownloadLogs(downloadID: string): $CancellablePromise<string[] | null> {
+    return $Call.ByID(3546972680, downloadID);
+}
+
 /**
  * GetDownloads is exposed to frontend
  */
 export function GetDownloads(): $CancellablePromise<$models.DownloadItem[] | null> {
     return $Call.ByID(3093261880);
+}
+
+export function GetTerminalLogs(): $CancellablePromise<string[] | null> {
+    return $Call.ByID(2244485744);
+}
+
+/**
+ * GetYouTubeFormats fetches format list for YouTube videos using yt-dlp --dump-single-json
+ */
+export function GetYouTubeFormats(u: string): $CancellablePromise<$models.YouTubeFormat[] | null> {
+    return $Call.ByID(991983236, u);
 }
 
 export function Logf(format: string, ...args: any[]): $CancellablePromise<void> {
@@ -52,8 +67,8 @@ export function PauseDownload(id: string): $CancellablePromise<void> {
 /**
  * RemoveDownload deletes the download completely from the list and database
  */
-export function RemoveDownload(id: string): $CancellablePromise<void> {
-    return $Call.ByID(3155670617, id);
+export function RemoveDownload(id: string, deleteFile: boolean): $CancellablePromise<void> {
+    return $Call.ByID(3155670617, id, deleteFile);
 }
 
 /**
@@ -72,6 +87,17 @@ export function RetryDownload(id: string): $CancellablePromise<void> {
 
 export function SaveConfig(config: $models.AppConfig): $CancellablePromise<void> {
     return $Call.ByID(3442292638, config);
+}
+
+export function SaveDownloadLog(downloadID: string, msg: string): $CancellablePromise<void> {
+    return $Call.ByID(2450373090, downloadID, msg);
+}
+
+/**
+ * SetDownloadFormat updates format choice for a download
+ */
+export function SetDownloadFormat(id: string, formatId: string): $CancellablePromise<void> {
+    return $Call.ByID(3058948344, id, formatId);
 }
 
 export function SetWailsApp(wailsApp: application$0.App | null): $CancellablePromise<void> {

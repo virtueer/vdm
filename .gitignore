@@ -1,20 +1,35 @@
 # Desktop (Go / Wails)
 desktop/bin/
+desktop/releases/
+desktop/desktop
+desktop/desktop.exe
 desktop/frontend/node_modules/
 desktop/frontend/dist/
+desktop/frontend/bindings/
+.task/
+
+# Extension
+extension/popup-dist/
+extension/popup-app/dist/
+extension/popup-app/node_modules/
+
+# Binaries & Archives
 *.exe
 *.app
 *.dmg
 *.AppImage
 
-# Go
+# Go & Build Artifacts
 *.test
 *.prof
+*.db
+*.log
 
-# MacOS
+# MacOS & System
 .DS_Store
 
 # IDEs
 .vscode/
 .idea/
 *.swp
+

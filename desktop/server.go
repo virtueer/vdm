@@ -7,11 +7,12 @@ import (
 )
 
 type DownloadRequest struct {
-	URL     string `json:"url"`
-	Type    string `json:"type"`
-	Size    string `json:"size"`
-	PageURL string `json:"pageUrl"`
-	Title   string `json:"title"`
+	URL      string `json:"url"`
+	Type     string `json:"type"`
+	Size     string `json:"size"`
+	PageURL  string `json:"pageUrl"`
+	Title    string `json:"title"`
+	FormatID string `json:"formatId"`
 }
 
 type Server struct {
@@ -49,7 +50,7 @@ func (s *Server) Start() {
 
 		// Pass to download manager via app
 		if s.app != nil {
-			s.app.AddDownload(req.URL, req.Type, req.Size, req.PageURL, req.Title)
+			s.app.AddDownload(req.URL, req.Type, req.Size, req.PageURL, req.Title, req.FormatID)
 		}
 
 		w.WriteHeader(http.StatusOK)

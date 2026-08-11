@@ -8,5 +8,6 @@ export {
 
 export type {
     AppConfig,
-    DownloadItem
+    DownloadItem,
+    YouTubeFormat
 } from "./models.js";

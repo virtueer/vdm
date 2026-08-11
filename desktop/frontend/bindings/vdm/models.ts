@@ -25,4 +25,31 @@ export interface DownloadItem {
      */
     "destination"?: string;
     "title": string;
+
+    /**
+     * Selected format ID e.g. "137+bestaudio" or "140"
+     */
+    "formatId"?: string;
+
+    /**
+     * Short live status line e.g. "Downloading webpage", "Moving file..."
+     */
+    "statusMsg"?: string;
+    "progress"?: number;
+    "speed"?: string;
+    "downloadedSize"?: string;
+    "totalSize"?: string;
+}
+
+export interface YouTubeFormat {
+    "formatId": string;
+    "ext": string;
+    "resolution": string;
+    "fps": number;
+    "filesize": number;
+    "tbr": number;
+    "vcodec": string;
+    "acodec": string;
+    "formatNote": string;
+    "format": string;
 }

@@ -24,7 +24,7 @@ type AppConfig struct {
 
 var GlobalConfig = AppConfig{
 	CustomPaths:         make(map[string]string),
-	ConcurrentFragments: 4,
+	ConcurrentFragments: 16,
 	EnableProbe:         true,
 	ProbeSizeMB:         5,
 }
@@ -45,7 +45,7 @@ func loadConfig() {
 		GlobalConfig.CustomPaths = make(map[string]string)
 	}
 	if GlobalConfig.ConcurrentFragments <= 0 {
-		GlobalConfig.ConcurrentFragments = 4
+		GlobalConfig.ConcurrentFragments = 16
 	}
 	if GlobalConfig.ProbeSizeMB <= 0 {
 		GlobalConfig.ProbeSizeMB = 5
@@ -97,7 +97,7 @@ func CheckAndResolveDependencies(app *application.App) {
 	}{
 		{
 			Name:        "yt-dlp",
-			DownloadURL: "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp",
+			DownloadURL: "https://github.com/yt-dlp/yt-dlp/releases/download/2025.01.26/yt-dlp",
 			IsArchive:   false,
 		},
 		{
