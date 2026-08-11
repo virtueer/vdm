@@ -52,9 +52,10 @@ export function useDownloadEvents(onNewYouTubeDownloadWithoutFormat?: (item: { i
                     const parsedPct = parseFloat(data.percentage);
                     setDownloads(prev => prev.map(d => {
                         if (d.id === data.id) {
-                            if (d.status === 'paused' || d.status === 'cancelled' || d.status === 'completed') return d;
+                            if (d.status === 'cancelled' || d.status === 'completed') return d;
                             return {
                                 ...d,
+                                status: 'downloading',
                                 progress: !isNaN(parsedPct) ? parsedPct : d.progress,
                                 speed: data.speed !== undefined ? data.speed : d.speed,
                                 downloadedSize: data.downloaded || d.downloadedSize,

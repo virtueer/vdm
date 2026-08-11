@@ -188,7 +188,7 @@ func (a *App) parseProgressLine(id string, line string, lastEmitMs *int64) bool 
 				if err == nil {
 					a.downloads[i].Progress = pctFloat
 				}
-				if a.downloads[i].StatusMsg == "" || a.downloads[i].StatusMsg == "Writing temporary cookies..." {
+				if a.downloads[i].StatusMsg == "" || a.downloads[i].StatusMsg == "Writing temporary cookies..." || a.downloads[i].StatusMsg == "Resuming..." || a.downloads[i].StatusMsg == "Retrying..." || a.downloads[i].StatusMsg == "Paused" || a.downloads[i].StatusMsg == "Pending" {
 					a.downloads[i].StatusMsg = "Downloading..."
 				}
 				if speedStr != "" {
@@ -231,6 +231,7 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 	for i, item := range a.downloads {
 		if item.ID == id {
 			a.downloads[i].Status = "downloading"
+			a.downloads[i].StatusMsg = "Downloading..."
 			if a.wailsApp != nil {
 				a.wailsApp.Event.Emit("download_updated", a.downloads[i])
 			}
@@ -293,7 +294,7 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 				"-o", outName,
 				"--js-runtimes", "node",
 				"--downloader", aria2cPath, 
-				"--downloader-args", fmt.Sprintf("aria2c:-x %s -s %s -k 1M --min-split-size=1M --file-allocation=none --summary-interval=1", threads, threads),
+				"--downloader-args", fmt.Sprintf("aria2c:-c --auto-file-renaming=false --allow-overwrite=true -x %s -s %s -k 1M --min-split-size=1M --file-allocation=none --summary-interval=1", threads, threads),
 				"--retry-sleep", "fragment:2",
 				"--retry-sleep", "http:2",
 			}
@@ -410,6 +411,9 @@ func (a *App) StartDownloadProcess(id string, downloadUrl string) {
 			threadsStr := fmt.Sprintf("%d", GlobalConfig.ConcurrentFragments)
 
 			args := []string{
+				"-c",
+				"--auto-file-renaming=false",
+				"--allow-overwrite=true",
 				"-x", threadsStr,
 				"-s", threadsStr,
 				"-k", "1M",

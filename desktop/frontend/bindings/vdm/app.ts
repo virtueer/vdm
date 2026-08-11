@@ -27,6 +27,10 @@ export function CancelDownload(id: string): $CancellablePromise<void> {
     return $Call.ByID(2532515671, id);
 }
 
+export function ClearTerminalLogs(): $CancellablePromise<void> {
+    return $Call.ByID(2297066145);
+}
+
 export function GetConfig(): $CancellablePromise<$models.AppConfig> {
     return $Call.ByID(1200034045);
 }

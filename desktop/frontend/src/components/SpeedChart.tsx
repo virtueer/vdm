@@ -13,6 +13,7 @@ import { formatChartSpeed } from '../utils/chartUtils';
 import { useChartHistory } from '../hooks/useChartHistory';
 
 interface SpeedChartProps {
+    downloadId?: string;
     speedStr?: string;
     downloadedSize?: string;
     totalSize?: string;

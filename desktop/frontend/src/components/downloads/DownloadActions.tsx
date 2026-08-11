@@ -39,19 +39,14 @@ export function DownloadActions({
                 </Button>
             )}
 
-            <Button 
-                variant="ghost"
-                size="icon"
-                onClick={() => setExpanded(!expanded)}
-                title="Toggle Chart"
-            >
+            <Button variant="ghost" size="icon" onClick={() => setExpanded(!expanded)} title="Toggle Chart">
                 {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </Button>
 
             {item.status === 'completed' && (
                 <Button 
-                    variant="ghost"
-                    size="icon"
+                    variant="ghost" 
+                    size="icon" 
                     onClick={() => ShowInFolder(item.id)}
                     className="hover:text-blue-500 hover:bg-blue-500/10"
                     title="Show in Folder"
@@ -63,7 +58,7 @@ export function DownloadActions({
             {(item.status === 'downloading' || item.status === 'pending') && (
                 <div className="flex items-center gap-1">
                     <Button 
-                        variant="ghost"
+                        variant="ghost" 
                         size="icon"
                         onClick={() => {
                             if (onUpdateItemStatus) onUpdateItemStatus(item.id, 'paused', 'Paused');
@@ -75,9 +70,9 @@ export function DownloadActions({
                         <Pause className="w-4 h-4 fill-current" />
                     </Button>
                     <Button 
-                        variant="ghost"
+                        variant="ghost" 
                         size="icon"
-                        onClick={() => { if (onDelete) onDelete(); }}
+                        onClick={() => onDelete && onDelete()}
                         className="hover:text-destructive hover:bg-destructive/10"
                         title="Cancel Download"
                     >
@@ -91,7 +86,10 @@ export function DownloadActions({
                     <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => ResumeDownload(item.id).catch(console.error)}
+                        onClick={() => {
+                            if (onUpdateItemStatus) onUpdateItemStatus(item.id, 'pending', 'Resuming...');
+                            ResumeDownload(item.id).catch(console.error);
+                        }}
                         className="hover:text-primary hover:bg-primary/10"
                         title="Resume"
                     >
@@ -100,7 +98,7 @@ export function DownloadActions({
                     <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => { if (onDelete) onDelete(); }}
+                        onClick={() => onDelete && onDelete()}
                         className="hover:text-destructive hover:bg-destructive/10"
                         title="Cancel & Delete File"
                     >
@@ -114,7 +112,10 @@ export function DownloadActions({
                     <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => RetryDownload(item.id).catch(console.error)}
+                        onClick={() => {
+                            if (onUpdateItemStatus) onUpdateItemStatus(item.id, 'pending', 'Retrying...');
+                            RetryDownload(item.id).catch(console.error);
+                        }}
                         className="hover:text-primary hover:bg-primary/10"
                         title="Retry"
                     >
@@ -123,7 +124,7 @@ export function DownloadActions({
                     <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => { if (onDelete) onDelete(); }}
+                        onClick={() => onDelete && onDelete()}
                         className="hover:text-destructive hover:bg-destructive/10"
                         title="Remove completely"
                     >
@@ -136,7 +137,7 @@ export function DownloadActions({
                 <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => { if (onDelete) onDelete(); }}
+                    onClick={() => onDelete && onDelete()}
                     className="hover:text-destructive hover:bg-destructive/10"
                     title="Remove from list"
                 >

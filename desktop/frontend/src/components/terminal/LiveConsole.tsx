@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Terminal, Check, Copy, XCircle } from "lucide-react";
 import { TerminalLine } from "./TerminalLine";
+import { ClearTerminalLogs } from "../../../bindings/vdm/app";
 
 interface LiveConsoleProps {
     logs: string[];
@@ -46,6 +47,11 @@ export function LiveConsole({ logs, terminalHeight, setTerminalHeight, onClear, 
         } catch (e) {}
     };
 
+    const handleClearLogs = () => {
+        ClearTerminalLogs().catch(console.error);
+        onClear();
+    };
+
     return (
         <div 
             style={{ height: `${terminalHeight}px` }}
@@ -83,7 +89,7 @@ export function LiveConsole({ logs, terminalHeight, setTerminalHeight, onClear, 
                         <span className="font-medium">{copiedLogs ? "Copied!" : "Copy All"}</span>
                     </button>
                     <button 
-                        onClick={onClear} 
+                        onClick={handleClearLogs} 
                         className="text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/80 px-2.5 py-1 rounded transition-colors font-medium"
                     >
                         Clear

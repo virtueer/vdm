@@ -124,6 +124,7 @@ export function DownloadCard({
             {(expanded || item.status === 'downloading') && (
                 <div className={expanded ? "h-[200px] border-t bg-muted/10" : "hidden"}>
                     <SpeedChart 
+                        downloadId={item.id}
                         speedStr={item.speed} 
                         downloadedSize={item.downloadedSize}
                         totalSize={item.totalSize || item.size}

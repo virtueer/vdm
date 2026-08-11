@@ -284,6 +284,15 @@ func (a *App) SaveDownloadLog(downloadID string, msg string) {
 	}
 }
 
+func (a *App) ClearTerminalLogs() {
+	a.mu.Lock()
+	a.terminalLogs = nil
+	a.mu.Unlock()
+	if a.db != nil {
+		a.db.Exec("DELETE FROM terminal_logs")
+	}
+}
+
 func (a *App) GetTerminalLogs() []string {
 	if a.db == nil {
 		return a.terminalLogs
@@ -499,7 +508,6 @@ func (a *App) PauseDownload(id string) {
 
 	wasRunning := false
 	if cancel, exists := a.cancelFuncs[id]; exists {
-		a.Logf("Pausing download %s\n", id)
 		cancel()
 		delete(a.cancelFuncs, id)
 		wasRunning = true
@@ -508,11 +516,14 @@ func (a *App) PauseDownload(id string) {
 	ts := time.Now().Format("15:04:05")
 	logMsg := fmt.Sprintf("[%s] Download paused", ts)
 
+	var title string
 	for i, item := range a.downloads {
 		if item.ID == id && (wasRunning || item.Status == "downloading" || item.Status == "pending") {
 			a.downloads[i].Status = "paused"
 			a.downloads[i].Speed = ""
 			a.downloads[i].StatusMsg = "Paused"
+			title = item.Title
+			if title == "" { title = item.URL }
 			if a.wailsApp != nil {
 				a.wailsApp.Event.Emit("download_updated", a.downloads[i])
 				a.wailsApp.Event.Emit("download_log", map[string]string{
@@ -525,6 +536,7 @@ func (a *App) PauseDownload(id string) {
 	}
 	a.mu.Unlock()
 
+	a.Logf("Paused download %s (%s)\n", id, title)
 	a.SaveDownloadLog(id, logMsg)
 	a.saveHistory()
 }
@@ -548,12 +560,10 @@ func (a *App) RemoveDownload(id string, deleteFile bool) {
 	}
 
 	if indexToRemove != -1 {
-		// Remove from slice
 		a.downloads = append(a.downloads[:indexToRemove], a.downloads[indexToRemove+1:]...)
 	}
 	a.mu.Unlock()
 
-	// Delete from filesystem if deleteFile is true
 	if deleteFile && fileToDelete != "" {
 		a.Logf("Deleting file for removed download: %s\n", fileToDelete)
 		os.Remove(fileToDelete)
@@ -561,7 +571,6 @@ func (a *App) RemoveDownload(id string, deleteFile bool) {
 		os.Remove(fileToDelete + ".ytdl")
 		os.Remove(fileToDelete + ".aria2")
 
-		// Also check and remove from Downloads folder if fileToDelete was pointing to temp
 		downloadDir := getDownloadDir()
 		baseName := filepath.Base(fileToDelete)
 		if baseName != "" && baseName != "." {
@@ -573,7 +582,6 @@ func (a *App) RemoveDownload(id string, deleteFile bool) {
 		}
 	}
 
-	// Remove from DB
 	if a.db != nil {
 		_, err := a.db.Exec("DELETE FROM downloads WHERE id = ?", id)
 		if err != nil {
@@ -592,10 +600,14 @@ func (a *App) RemoveDownload(id string, deleteFile bool) {
 func (a *App) ResumeDownload(id string) {
 	a.mu.Lock()
 	var targetUrl string
+	var title string
 	for i, item := range a.downloads {
-		if item.ID == id && item.Status == "paused" {
+		if item.ID == id && (item.Status == "paused" || item.Status == "pending" || item.Status == "error" || item.Status == "cancelled") {
 			a.downloads[i].Status = "pending"
+			a.downloads[i].StatusMsg = "Resuming..."
 			targetUrl = item.URL
+			title = item.Title
+			if title == "" { title = item.URL }
 			if a.wailsApp != nil {
 				a.wailsApp.Event.Emit("download_updated", a.downloads[i])
 			}
@@ -606,7 +618,16 @@ func (a *App) ResumeDownload(id string) {
 	a.saveHistory()
 
 	if targetUrl != "" {
-		a.Logf("Resuming download %s\n", id)
+		ts := time.Now().Format("15:04:05")
+		logMsg := fmt.Sprintf("[%s] Download resumed", ts)
+		a.Logf("Resuming download %s (%s)\n", id, title)
+		a.SaveDownloadLog(id, logMsg)
+		if a.wailsApp != nil {
+			a.wailsApp.Event.Emit("download_log", map[string]string{
+				"id":      id,
+				"message": logMsg,
+			})
+		}
 		a.StartDownloadProcess(id, targetUrl)
 	}
 }
@@ -615,10 +636,14 @@ func (a *App) ResumeDownload(id string) {
 func (a *App) RetryDownload(id string) {
 	a.mu.Lock()
 	var targetUrl string
+	var title string
 	for i, item := range a.downloads {
 		if item.ID == id && (item.Status == "error" || item.Status == "cancelled" || item.Status == "paused") {
 			a.downloads[i].Status = "pending"
+			a.downloads[i].StatusMsg = "Retrying..."
 			targetUrl = item.URL
+			title = item.Title
+			if title == "" { title = item.URL }
 			if a.wailsApp != nil {
 				a.wailsApp.Event.Emit("download_updated", a.downloads[i])
 			}
@@ -629,7 +654,16 @@ func (a *App) RetryDownload(id string) {
 	a.saveHistory()
 
 	if targetUrl != "" {
-		a.Logf("Retrying download %s\n", id)
+		ts := time.Now().Format("15:04:05")
+		logMsg := fmt.Sprintf("[%s] Download retried", ts)
+		a.Logf("Retrying download %s (%s)\n", id, title)
+		a.SaveDownloadLog(id, logMsg)
+		if a.wailsApp != nil {
+			a.wailsApp.Event.Emit("download_log", map[string]string{
+				"id":      id,
+				"message": logMsg,
+			})
+		}
 		a.StartDownloadProcess(id, targetUrl)
 	}
 }
@@ -638,18 +672,21 @@ func (a *App) RetryDownload(id string) {
 func (a *App) CancelDownload(id string) {
 	a.mu.Lock()
 	if cancel, exists := a.cancelFuncs[id]; exists {
-		a.Logf("Cancelling download %s\n", id)
 		cancel()
 		delete(a.cancelFuncs, id)
 	}
 
 	var fileToDelete string
 	var itemFound bool
+	var title string
 	for i, item := range a.downloads {
 		if item.ID == id {
 			itemFound = true
+			title = item.Title
+			if title == "" { title = item.URL }
 			if item.Status != "completed" {
 				a.downloads[i].Status = "cancelled"
+				a.downloads[i].StatusMsg = "Cancelled"
 				fileToDelete = item.Destination
 				if a.wailsApp != nil {
 					a.wailsApp.Event.Emit("download_updated", a.downloads[i])
@@ -661,14 +698,22 @@ func (a *App) CancelDownload(id string) {
 	a.mu.Unlock()
 	a.saveHistory()
 
-	// Delete file if the download was not completed
+	ts := time.Now().Format("15:04:05")
+	logMsg := fmt.Sprintf("[%s] Download cancelled", ts)
+	a.Logf("Cancelling download %s (%s)\n", id, title)
+	a.SaveDownloadLog(id, logMsg)
+	if a.wailsApp != nil {
+		a.wailsApp.Event.Emit("download_log", map[string]string{
+			"id":      id,
+			"message": logMsg,
+		})
+	}
+
 	if itemFound && fileToDelete != "" {
 		a.Logf("Deleting partial file for cancelled download: %s\n", fileToDelete)
-		// yt-dlp creates .part or .ytdl files, so we might need to delete those as well
 		os.Remove(fileToDelete)
 		os.Remove(fileToDelete + ".part")
 		os.Remove(fileToDelete + ".ytdl")
-		// For aria2c, it creates an .aria2 file
 		os.Remove(fileToDelete + ".aria2")
 	}
 }

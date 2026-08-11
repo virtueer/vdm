@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { parseSpeed, parseSizeToMB, formatChartSpeed } from '../utils/chartUtils';
 
 interface UseChartHistoryProps {
+    downloadId?: string;
     speedStr?: string;
     downloadedSize?: string;
     totalSize?: string;
@@ -10,10 +11,13 @@ interface UseChartHistoryProps {
     onStatsUpdate?: (avgSpeed: string, duration: string) => void;
 }
 
-export function useChartHistory({ speedStr, downloadedSize, totalSize, progress, isDownloading, onStatsUpdate }: UseChartHistoryProps) {
-    const [history, setHistory] = useState<any[]>([]);
+const globalHistoryCache = new Map<string, { history: any[]; accumulatedTime: number }>();
+
+export function useChartHistory({ downloadId, speedStr, downloadedSize, totalSize, progress, isDownloading, onStatsUpdate }: UseChartHistoryProps) {
+    const cached = downloadId ? globalHistoryCache.get(downloadId) : undefined;
+    const [history, setHistory] = useState<any[]>(cached?.history || []);
     
-    const accumulatedTimeRef = useRef<number>(0);
+    const accumulatedTimeRef = useRef<number>(cached?.accumulatedTime || 0);
     const latestSpeedRef = useRef<string>(speedStr || '');
     const latestDownloadedRef = useRef<{ dl?: string; tot?: string; pct?: number }>({ dl: downloadedSize, tot: totalSize, pct: progress });
     
@@ -27,13 +31,6 @@ export function useChartHistory({ speedStr, downloadedSize, totalSize, progress,
     useEffect(() => {
         latestDownloadedRef.current = { dl: downloadedSize, tot: totalSize, pct: progress };
     }, [downloadedSize, totalSize, progress]);
-
-    useEffect(() => {
-        if (progress === 0) {
-            accumulatedTimeRef.current = 0;
-            setHistory([]);
-        }
-    }, [progress]);
 
     useEffect(() => {
         if (!isDownloading) {
@@ -94,12 +91,16 @@ export function useChartHistory({ speedStr, downloadedSize, totalSize, progress,
                     onStatsUpdate(formatChartSpeed(avgSpeed), durStr);
                 }
 
+                if (downloadId) {
+                    globalHistoryCache.set(downloadId, { history: next, accumulatedTime: elapsed });
+                }
+
                 return next;
             });
         }, 1000);
         
         return () => clearInterval(interval);
-    }, [isDownloading, onStatsUpdate]);
+    }, [isDownloading, onStatsUpdate, downloadId]);
 
     return history;
 }
