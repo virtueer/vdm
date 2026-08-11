@@ -1,5 +1,7 @@
 import React, { useState } from "react";
-import { SlidersHorizontal, XCircle, Loader2, Check } from "lucide-react";
+import { SlidersHorizontal, Loader2, Check, XCircle } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { SetDownloadFormat, ResumeDownload } from "../../../bindings/vdm/app";
 import type { DownloadItem, FormatSortField } from "../../types/download";
 import { useYouTubeFormatsFetcher } from "../../hooks/useYouTubeFormatsFetcher";
@@ -52,18 +54,15 @@ export function YouTubeFormatModal({ target, downloads, onManualDownload, onClos
     const sortedFormats = sortFormats(formatsList, formatCategory, formatSortField, formatSortAsc);
 
     return (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border shadow-2xl rounded-xl max-w-4xl w-full flex flex-col h-[80vh] overflow-hidden">
-                <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
-                    <div>
-                        <h3 className="text-base font-semibold flex items-center gap-2">
-                            <SlidersHorizontal className="w-5 h-5 text-orange-500" />
-                            YouTube Formats (yt-dlp -F)
-                        </h3>
-                        <p className="text-xs text-muted-foreground truncate max-w-xl mt-0.5" title={target.title || target.url}>{target.title || target.url}</p>
-                    </div>
-                    <button onClick={onClose} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted transition-colors"><XCircle className="w-5 h-5" /></button>
-                </div>
+        <Dialog open onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-4xl h-[80vh] p-0 gap-0 overflow-hidden flex flex-col">
+                <DialogHeader className="px-6 py-4 border-b bg-muted/30">
+                    <DialogTitle className="text-base font-semibold flex items-center gap-2">
+                        <SlidersHorizontal className="w-5 h-5 text-orange-500" />
+                        YouTube Formats (yt-dlp -F)
+                    </DialogTitle>
+                    <p className="text-xs text-muted-foreground truncate max-w-xl mt-0.5" title={target.title || target.url}>{target.title || target.url}</p>
+                </DialogHeader>
 
                 <FormatPresets 
                     selectedFormatId={selectedFormatId}
@@ -102,7 +101,7 @@ export function YouTubeFormatModal({ target, downloads, onManualDownload, onClos
                     )}
                 </div>
 
-                <div className="flex items-center justify-between px-6 py-4 border-t bg-card">
+                <DialogFooter className="px-6 py-4 border-t bg-card flex items-center justify-between sm:justify-between">
                     <div className="text-xs text-muted-foreground">
                         {selectedFormatId ? (
                             <span>
@@ -114,14 +113,19 @@ export function YouTubeFormatModal({ target, downloads, onManualDownload, onClos
                         ) : (<span>Click on a format row or preset above to select</span>)}
                     </div>
                     <div className="flex gap-3">
-                        <button onClick={onClose} className="px-4 py-2 rounded-md hover:bg-muted text-xs font-medium transition-colors">Cancel</button>
-                        <button onClick={applySelectedFormat} disabled={!selectedFormatId} className="px-4 py-2 rounded-md bg-orange-600 text-white hover:bg-orange-500 text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
+                        <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+                        <Button 
+                            size="sm"
+                            onClick={applySelectedFormat} 
+                            disabled={!selectedFormatId} 
+                            className="bg-orange-600 hover:bg-orange-500 text-white gap-1.5"
+                        >
                             <Check className="w-4 h-4" />
                             Start Download
-                        </button>
+                        </Button>
                     </div>
-                </div>
-            </div>
-        </div>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }

@@ -1,5 +1,6 @@
 import React from "react";
 import { Badge } from "@/components/ui/badge";
+import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import type { YouTubeFormat } from "../../../bindings/vdm/models";
 import type { FormatSortField } from "../../types/download";
 import { formatBytes } from "../../utils/formatters";
@@ -26,9 +27,9 @@ export function FormatTable({
     const renderSortHeader = (label: string, field: FormatSortField) => {
         const isActive = formatSortField === field;
         return (
-            <th 
+            <TableHead 
                 onClick={() => onSort(field)}
-                className="p-2.5 cursor-pointer hover:bg-muted/70 transition-colors select-none group"
+                className="cursor-pointer hover:bg-muted/70 transition-colors select-none group"
             >
                 <div className="flex items-center gap-1">
                     <span>{label}</span>
@@ -36,15 +37,15 @@ export function FormatTable({
                         {isActive ? (formatSortAsc ? '▲' : '▼') : '↕'}
                     </span>
                 </div>
-            </th>
+            </TableHead>
         );
     };
 
     return (
-        <table className="w-full text-left border-collapse text-xs font-mono">
-            <thead>
-                <tr className="border-b bg-muted/40 text-muted-foreground font-sans">
-                    <th className="p-2.5 w-10">Select</th>
+        <Table className="text-xs font-mono">
+            <TableHeader className="bg-muted/40 font-sans">
+                <TableRow>
+                    <TableHead className="w-10 text-center">Select</TableHead>
                     {renderSortHeader("ID", "formatId")}
                     {renderSortHeader("EXT", "ext")}
                     {renderSortHeader("RESOLUTION", "resolution")}
@@ -54,21 +55,21 @@ export function FormatTable({
                     {renderSortHeader("VCODEC", "vcodec")}
                     {renderSortHeader("ACODEC", "acodec")}
                     {renderSortHeader("NOTE", "formatNote")}
-                </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
+                </TableRow>
+            </TableHeader>
+            <TableBody>
                 {formats.map((f) => {
                     const isSelected = selectedFormatId === f.formatId;
                     const isVideoOnly = f.vcodec !== 'none' && f.vcodec !== '' && (f.acodec === 'none' || f.acodec === '');
                     const isAudioOnly = (f.vcodec === 'none' || f.vcodec === '') && f.acodec !== 'none' && f.acodec !== '';
 
                     return (
-                        <tr 
+                        <TableRow 
                             key={f.formatId}
                             onClick={() => setSelectedFormatId(f.formatId)}
-                            className={`cursor-pointer transition-colors ${isSelected ? 'bg-orange-500/10 dark:bg-orange-500/20 font-semibold' : 'hover:bg-muted/50'}`}
+                            className={`cursor-pointer ${isSelected ? 'bg-orange-500/10 dark:bg-orange-500/20 font-semibold' : ''}`}
                         >
-                            <td className="p-2.5 text-center">
+                            <TableCell className="text-center">
                                 <input 
                                     type="radio" 
                                     name="yt_format" 
@@ -76,10 +77,10 @@ export function FormatTable({
                                     onChange={() => setSelectedFormatId(f.formatId)}
                                     className="text-orange-500 focus:ring-orange-500"
                                 />
-                            </td>
-                            <td className="p-2.5 font-bold text-orange-600 dark:text-orange-400">{f.formatId}</td>
-                            <td className="p-2.5">{f.ext}</td>
-                            <td className="p-2.5">
+                            </TableCell>
+                            <TableCell className="font-bold text-orange-600 dark:text-orange-400">{f.formatId}</TableCell>
+                            <TableCell>{f.ext}</TableCell>
+                            <TableCell>
                                 {f.resolution}
                                 {isVideoOnly && (
                                     <Badge variant="outline" className="ml-1 text-[9px] py-0 px-1 text-blue-500 border-blue-500/30">
@@ -87,17 +88,17 @@ export function FormatTable({
                                     </Badge>
                                 )}
                                 {isAudioOnly && <Badge variant="outline" className="ml-1 text-[9px] py-0 px-1 text-green-500 border-green-500/30">audio</Badge>}
-                            </td>
-                            <td className="p-2.5">{f.fps > 0 ? f.fps : '-'}</td>
-                            <td className="p-2.5">{formatBytes(f.filesize)}</td>
-                            <td className="p-2.5">{f.tbr > 0 ? `${f.tbr.toFixed(0)}k` : '-'}</td>
-                            <td className="p-2.5 text-muted-foreground max-w-[120px] truncate" title={f.vcodec}>{f.vcodec}</td>
-                            <td className="p-2.5 text-muted-foreground max-w-[120px] truncate" title={f.acodec}>{f.acodec}</td>
-                            <td className="p-2.5 text-muted-foreground">{f.formatNote || '-'}</td>
-                        </tr>
+                            </TableCell>
+                            <TableCell>{f.fps > 0 ? f.fps : '-'}</TableCell>
+                            <TableCell>{formatBytes(f.filesize)}</TableCell>
+                            <TableCell>{f.tbr > 0 ? `${f.tbr.toFixed(0)}k` : '-'}</TableCell>
+                            <TableCell className="text-muted-foreground max-w-[120px] truncate" title={f.vcodec}>{f.vcodec}</TableCell>
+                            <TableCell className="text-muted-foreground max-w-[120px] truncate" title={f.acodec}>{f.acodec}</TableCell>
+                            <TableCell className="text-muted-foreground">{f.formatNote || '-'}</TableCell>
+                        </TableRow>
                     );
                 })}
-            </tbody>
-        </table>
+            </TableBody>
+        </Table>
     );
 }

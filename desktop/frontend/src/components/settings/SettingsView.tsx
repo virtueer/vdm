@@ -1,5 +1,7 @@
 import React from "react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import type { AppConfig } from "../../../bindings/vdm/models";
 import { SaveConfig } from "../../../bindings/vdm/app";
 
@@ -33,7 +35,7 @@ export function SettingsView({ config, setConfig }: SettingsViewProps) {
                                         <label className="text-sm font-medium leading-none">Concurrent Connections</label>
                                         <p className="text-xs text-muted-foreground">Number of simultaneous fragments to download per video.</p>
                                     </div>
-                                    <input 
+                                    <Input 
                                         type="number" 
                                         min="1" 
                                         max="32" 
@@ -42,7 +44,7 @@ export function SettingsView({ config, setConfig }: SettingsViewProps) {
                                             const val = parseInt(e.target.value) || 1;
                                             handleConfigChange({ ...config, concurrentFragments: val });
                                         }}
-                                        className="flex h-9 w-20 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                        className="w-20"
                                     />
                                 </div>
 
@@ -51,12 +53,10 @@ export function SettingsView({ config, setConfig }: SettingsViewProps) {
                                         <label className="text-sm font-medium leading-none">Server Probe</label>
                                         <p className="text-xs text-muted-foreground">Automatically detect server speed and adjust connections.</p>
                                     </div>
-                                    <div
-                                        onClick={() => handleConfigChange({ ...config, enableProbe: !config.enableProbe })}
-                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${config.enableProbe ? 'bg-primary' : 'bg-muted'}`}
-                                    >
-                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-background transition-transform ${config.enableProbe ? 'translate-x-6' : 'translate-x-1'}`} />
-                                    </div>
+                                    <Switch 
+                                        checked={config.enableProbe}
+                                        onCheckedChange={(checked) => handleConfigChange({ ...config, enableProbe: checked })}
+                                    />
                                 </div>
 
                                 <div className="flex items-center justify-between gap-4">
@@ -64,7 +64,7 @@ export function SettingsView({ config, setConfig }: SettingsViewProps) {
                                         <label className="text-sm font-medium leading-none">Probe Size (MB)</label>
                                         <p className="text-xs text-muted-foreground">Amount of data to download for speed testing.</p>
                                     </div>
-                                    <input 
+                                    <Input 
                                         type="number" 
                                         min="1" 
                                         max="20" 
@@ -73,7 +73,7 @@ export function SettingsView({ config, setConfig }: SettingsViewProps) {
                                             const val = parseInt(e.target.value) || 5;
                                             handleConfigChange({ ...config, probeSizeMB: val });
                                         }}
-                                        className="flex h-9 w-20 rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                                        className="w-20"
                                     />
                                 </div>
                             </div>

@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { Trash2 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import type { DownloadItem } from "../../types/download";
 import { CancelDownload, RemoveDownload } from "../../../bindings/vdm/app";
 
@@ -20,17 +22,20 @@ export function DeleteModal({ item, onClose }: DeleteModalProps) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-card border shadow-xl rounded-xl max-w-md w-full p-6">
-                <h3 className="text-base font-semibold mb-1 flex items-center gap-2">
-                    <Trash2 className="w-5 h-5 text-destructive" />
-                    Delete Download
-                </h3>
-                <p className="text-sm text-muted-foreground mb-4">
+        <Dialog open onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-md p-6">
+                <DialogHeader>
+                    <DialogTitle className="flex items-center gap-2 text-base">
+                        <Trash2 className="w-5 h-5 text-destructive" />
+                        Delete Download
+                    </DialogTitle>
+                </DialogHeader>
+
+                <p className="text-sm text-muted-foreground my-2">
                     Are you sure you want to remove <strong className="text-foreground">{item.title || 'this download'}</strong> from the list?
                 </p>
 
-                <label className="flex items-start gap-3 p-3 rounded-lg border bg-muted/40 text-xs cursor-pointer mb-6 hover:bg-muted/70 transition-colors">
+                <label className="flex items-start gap-3 p-3 rounded-lg border bg-muted/40 text-xs cursor-pointer my-2 hover:bg-muted/70 transition-colors">
                     <input 
                         type="checkbox" 
                         checked={deleteFileFromDisk} 
@@ -45,21 +50,15 @@ export function DeleteModal({ item, onClose }: DeleteModalProps) {
                     </div>
                 </label>
 
-                <div className="flex justify-end gap-2.5">
-                    <button 
-                        onClick={onClose}
-                        className="px-4 py-2 rounded-md hover:bg-muted transition-colors text-xs font-medium"
-                    >
+                <DialogFooter className="gap-2 sm:gap-0">
+                    <Button variant="ghost" size="sm" onClick={onClose}>
                         Cancel
-                    </button>
-                    <button 
-                        onClick={handleDelete}
-                        className="px-4 py-2 rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors text-xs font-medium"
-                    >
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={handleDelete}>
                         Delete
-                    </button>
-                </div>
-            </div>
-        </div>
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
     );
 }

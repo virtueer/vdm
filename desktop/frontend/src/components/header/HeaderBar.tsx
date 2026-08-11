@@ -1,5 +1,7 @@
 import React from "react";
 import { Activity, DownloadCloud, Settings, Terminal } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 interface HeaderBarProps {
     activeTab: "downloads" | "settings";
@@ -20,30 +22,28 @@ export function HeaderBar({ activeTab, setActiveTab, showTerminal, setShowTermin
                 </div>
             </div>
             <div className="flex items-center gap-3">
-                <div className="flex items-center gap-1 bg-muted/50 p-0.5 rounded-md">
-                    <button 
-                        onClick={() => setActiveTab("downloads")}
-                        className={`px-3 py-1.5 text-sm font-medium rounded transition-all flex items-center gap-2 ${activeTab === 'downloads' ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-                    >
-                        <DownloadCloud className="w-3.5 h-3.5" />
-                        Downloads
-                    </button>
-                    <button 
-                        onClick={() => setActiveTab("settings")}
-                        className={`px-3 py-1.5 text-sm font-medium rounded transition-all flex items-center gap-2 ${activeTab === 'settings' ? 'bg-background text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
-                    >
-                        <Settings className="w-3.5 h-3.5" />
-                        Settings
-                    </button>
-                </div>
+                <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as "downloads" | "settings")}>
+                    <TabsList className="bg-muted/50 p-0.5">
+                        <TabsTrigger value="downloads" className="gap-2 text-xs">
+                            <DownloadCloud className="w-3.5 h-3.5" />
+                            Downloads
+                        </TabsTrigger>
+                        <TabsTrigger value="settings" className="gap-2 text-xs">
+                            <Settings className="w-3.5 h-3.5" />
+                            Settings
+                        </TabsTrigger>
+                    </TabsList>
+                </Tabs>
 
-                <button 
+                <Button 
+                    variant={showTerminal ? "secondary" : "ghost"}
+                    size="icon"
                     onClick={() => setShowTerminal(!showTerminal)}
-                    className={`p-2 rounded-md transition-colors ${showTerminal ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+                    className={showTerminal ? "bg-primary/10 text-primary" : "text-muted-foreground"}
                     title="Toggle Terminal Logs"
                 >
                     <Terminal className="w-4 h-4" />
-                </button>
+                </Button>
 
                 <div className="flex items-center gap-2 ml-2">
                     <span className="relative flex h-2.5 w-2.5">

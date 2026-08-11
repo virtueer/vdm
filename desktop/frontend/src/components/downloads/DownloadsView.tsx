@@ -73,7 +73,7 @@ export function DownloadsView({
                 </div>
             </div>
 
-            <AddUrlCard 
+            <AddUrlCard
                 showManualInput={showManualInput}
                 setShowManualInput={setShowManualInput}
                 manualUrl={manualUrl}
@@ -99,9 +99,9 @@ export function DownloadsView({
                     <ScrollArea className="h-full">
                         <div className="p-4 space-y-2">
                             {downloads.map(dl => (
-                                <DownloadCard 
-                                    key={dl.id} 
-                                    item={dl} 
+                                <DownloadCard
+                                    key={dl.id}
+                                    item={dl}
                                     logCount={downloadLogs[dl.id]?.length || 0}
                                     probeInfo={probes[dl.id]}
                                     onViewLogs={() => onViewLogs(dl.id)}

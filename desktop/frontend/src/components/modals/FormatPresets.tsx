@@ -1,4 +1,5 @@
 import React from "react";
+import { Button } from "@/components/ui/button";
 
 interface FormatPresetsProps {
     selectedFormatId: string | null;
@@ -23,42 +24,52 @@ export function FormatPresets({
         <div className="flex flex-col gap-2.5 px-6 py-3 border-b bg-card">
             <div className="flex flex-wrap items-center gap-2">
                 <span className="text-xs font-semibold text-muted-foreground mr-1">Quick Presets:</span>
-                <button
+                <Button
+                    size="sm"
+                    variant={selectedFormatId === 'bestvideo+bestaudio/best' ? 'default' : 'outline'}
                     onClick={() => setSelectedFormatId('bestvideo+bestaudio/best')}
-                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${selectedFormatId === 'bestvideo+bestaudio/best' ? 'bg-orange-500 text-white border-orange-500' : 'bg-muted/40 hover:bg-muted text-foreground'}`}
+                    className={selectedFormatId === 'bestvideo+bestaudio/best' ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}
                 >
                     🌟 Best Available (Auto Video + Audio)
-                </button>
-                <button
+                </Button>
+                <Button
+                    size="sm"
+                    variant={selectedFormatId === 'bestvideo[height<=1080]+bestaudio/best' ? 'default' : 'outline'}
                     onClick={() => setSelectedFormatId('bestvideo[height<=1080]+bestaudio/best')}
-                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${selectedFormatId === 'bestvideo[height<=1080]+bestaudio/best' ? 'bg-orange-500 text-white border-orange-500' : 'bg-muted/40 hover:bg-muted text-foreground'}`}
+                    className={selectedFormatId === 'bestvideo[height<=1080]+bestaudio/best' ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}
                 >
                     🎬 1080p Max + Audio
-                </button>
-                <button
+                </Button>
+                <Button
+                    size="sm"
+                    variant={selectedFormatId === 'bestaudio/best' ? 'default' : 'outline'}
                     onClick={() => setSelectedFormatId('bestaudio/best')}
-                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${selectedFormatId === 'bestaudio/best' ? 'bg-orange-500 text-white border-orange-500' : 'bg-muted/40 hover:bg-muted text-foreground'}`}
+                    className={selectedFormatId === 'bestaudio/best' ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}
                 >
                     🎵 Best Audio Only
-                </button>
-                <button
+                </Button>
+                <Button
+                    size="sm"
+                    variant={selectedFormatId === '18' ? 'default' : 'outline'}
                     onClick={() => setSelectedFormatId('18')}
-                    className={`px-2.5 py-1 text-xs rounded-md border font-medium transition-colors ${selectedFormatId === '18' ? 'bg-orange-500 text-white border-orange-500' : 'bg-muted/40 hover:bg-muted text-foreground'}`}
+                    className={selectedFormatId === '18' ? 'bg-orange-500 hover:bg-orange-600 text-white' : ''}
                 >
                     📱 360p Single File
-                </button>
+                </Button>
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1 border-t border-border/40">
                 <div className="flex items-center gap-1 bg-muted/60 p-1 rounded-lg">
                     {(['all', 'combined', 'video', 'audio'] as const).map(cat => (
-                        <button
+                        <Button
                             key={cat}
+                            size="sm"
+                            variant={formatCategory === cat ? 'secondary' : 'ghost'}
                             onClick={() => setFormatCategory(cat)}
-                            className={`px-3 py-1 text-xs font-medium rounded-md transition-all capitalize ${formatCategory === cat ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                            className="capitalize h-7 text-xs"
                         >
                             {cat === 'all' ? `All (${totalFormatsCount})` : cat}
-                        </button>
+                        </Button>
                     ))}
                 </div>
 
