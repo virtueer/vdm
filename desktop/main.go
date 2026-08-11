@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"vdm/internal/deps"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
@@ -32,7 +33,7 @@ func main() {
 	myApp.StartServer()
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
-		go CheckAndResolveDependencies(app)
+		go deps.CheckAndResolveDependencies(app)
 	})
 
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
@@ -41,7 +42,7 @@ func main() {
 		Height: 618,
 		URL:    "/",
 	})
-	
+
 	myApp.SetWindow(window)
 
 	err := app.Run()

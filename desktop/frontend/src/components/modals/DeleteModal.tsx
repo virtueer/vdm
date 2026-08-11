@@ -3,7 +3,7 @@ import { Trash2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import type { DownloadItem } from "../../types/download";
-import { CancelDownload, RemoveDownload } from "../../../bindings/vdm/app";
+import { RemoveDownload } from "../../../bindings/vdm/app";
 
 interface DeleteModalProps {
     item: DownloadItem;
@@ -12,17 +12,22 @@ interface DeleteModalProps {
 
 export function DeleteModal({ item, onClose }: DeleteModalProps) {
     const [deleteFileFromDisk, setDeleteFileFromDisk] = useState<boolean>(true);
+    const [deleting, setDeleting] = useState(false);
 
-    const handleDelete = () => {
-        if (item.status === 'downloading' || item.status === 'pending' || item.status === 'paused') {
-            CancelDownload(item.id).catch(console.error);
+    const handleDelete = async () => {
+        setDeleting(true);
+        try {
+            await RemoveDownload(item.id, deleteFileFromDisk);
+        } catch(err) {
+            console.error("Failed to remove download:", err);
+        } finally {
+            setDeleting(false);
+            onClose();
         }
-        RemoveDownload(item.id, deleteFileFromDisk).catch(console.error);
-        onClose();
     };
 
     return (
-        <Dialog open onOpenChange={(open) => !open && onClose()}>
+        <Dialog open onOpenChange={(open) => !open && !deleting && onClose()}>
             <DialogContent className="max-w-md p-6">
                 <DialogHeader>
                     <DialogTitle className="flex items-center gap-2 text-base">
@@ -40,6 +45,7 @@ export function DeleteModal({ item, onClose }: DeleteModalProps) {
                         type="checkbox" 
                         checked={deleteFileFromDisk} 
                         onChange={(e) => setDeleteFileFromDisk(e.target.checked)}
+                        disabled={deleting}
                         className="rounded border-input text-destructive focus:ring-destructive mt-0.5 w-4 h-4"
                     />
                     <div className="flex flex-col gap-0.5 min-w-0">
@@ -51,11 +57,11 @@ export function DeleteModal({ item, onClose }: DeleteModalProps) {
                 </label>
 
                 <DialogFooter className="gap-2 sm:gap-0">
-                    <Button variant="ghost" size="sm" onClick={onClose}>
+                    <Button variant="ghost" size="sm" onClick={onClose} disabled={deleting}>
                         Cancel
                     </Button>
-                    <Button variant="destructive" size="sm" onClick={handleDelete}>
-                        Delete
+                    <Button variant="destructive" size="sm" onClick={handleDelete} disabled={deleting}>
+                        {deleting ? "Deleting..." : "Delete"}
                     </Button>
                 </DialogFooter>
             </DialogContent>

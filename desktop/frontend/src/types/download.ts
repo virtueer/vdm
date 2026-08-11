@@ -12,6 +12,9 @@ export interface DownloadItem {
     formatId?: string;
     statusMsg?: string;
     destination?: string;
+    createdAt?: number;
+    startedAt?: number;
+    elapsedSecs?: number;
 }
 
 export interface ProbeInfo {

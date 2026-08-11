@@ -39,8 +39,8 @@ export function ProcessLogModal({ downloadId, downloadLogs, setDownloadLogs, onC
 
     return (
         <Dialog open onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-3xl h-[65vh] p-0 gap-0 overflow-hidden bg-zinc-950 border-zinc-800">
-                <DialogHeader className="px-5 py-3.5 bg-zinc-900 border-b border-zinc-800 flex-row items-center justify-between space-y-0">
+            <DialogContent className="max-w-3xl h-[65vh] flex flex-col p-0 gap-0 overflow-hidden bg-zinc-950 border-zinc-800" hideClose>
+                <DialogHeader className="px-4 py-2.5 bg-zinc-900 border-b border-zinc-800 flex flex-row items-center justify-between space-y-0 h-11 shrink-0">
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-1.5">
                             <div className="w-2.5 h-2.5 rounded-full bg-rose-500/80" />
@@ -57,7 +57,7 @@ export function ProcessLogModal({ downloadId, downloadLogs, setDownloadLogs, onC
                         variant="ghost"
                         size="sm"
                         onClick={handleCopy}
-                        className="text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 gap-1.5"
+                        className="text-xs text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 gap-1.5 h-7 px-2.5"
                     >
                         {copiedProcessLogs ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                         <span>{copiedProcessLogs ? "Copied!" : "Copy All"}</span>

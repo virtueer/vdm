@@ -5,9 +5,3 @@ import * as App from "./app.js";
 export {
     App
 };
-
-export type {
-    AppConfig,
-    DownloadItem,
-    YouTubeFormat
-} from "./models.js";

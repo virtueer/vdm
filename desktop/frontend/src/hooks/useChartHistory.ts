@@ -8,21 +8,57 @@ interface UseChartHistoryProps {
     totalSize?: string;
     progress?: number;
     isDownloading: boolean;
+    startedAt?: number;
+    elapsedSecs?: number;
     onStatsUpdate?: (avgSpeed: string, duration: string) => void;
 }
 
 const globalHistoryCache = new Map<string, { history: any[]; accumulatedTime: number }>();
 
-export function useChartHistory({ downloadId, speedStr, downloadedSize, totalSize, progress, isDownloading, onStatsUpdate }: UseChartHistoryProps) {
-    const cached = downloadId ? globalHistoryCache.get(downloadId) : undefined;
+function getStoredHistory(downloadId?: string): { history: any[]; accumulatedTime: number } | undefined {
+    if (!downloadId) return undefined;
+    if (globalHistoryCache.has(downloadId)) {
+        return globalHistoryCache.get(downloadId);
+    }
+    try {
+        const raw = localStorage.getItem(`vdm_chart_${downloadId}`);
+        if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed.history)) {
+                globalHistoryCache.set(downloadId, parsed);
+                return parsed;
+            }
+        }
+    } catch(e) {}
+    return undefined;
+}
+
+function saveStoredHistory(downloadId: string, data: { history: any[]; accumulatedTime: number }) {
+    globalHistoryCache.set(downloadId, data);
+    try {
+        const trimmedHistory = data.history.slice(-1000);
+        localStorage.setItem(`vdm_chart_${downloadId}`, JSON.stringify({
+            history: trimmedHistory,
+            accumulatedTime: data.accumulatedTime
+        }));
+    } catch(e) {}
+}
+
+export function useChartHistory({ downloadId, speedStr, downloadedSize, totalSize, progress, isDownloading, startedAt, elapsedSecs, onStatsUpdate }: UseChartHistoryProps) {
+    const cached = getStoredHistory(downloadId);
     const [history, setHistory] = useState<any[]>(cached?.history || []);
     
     const accumulatedTimeRef = useRef<number>(cached?.accumulatedTime || 0);
     const latestSpeedRef = useRef<string>(speedStr || '');
     const latestDownloadedRef = useRef<{ dl?: string; tot?: string; pct?: number }>({ dl: downloadedSize, tot: totalSize, pct: progress });
+    const onStatsUpdateRef = useRef(onStatsUpdate);
     
     const lastMBRef = useRef<number>(0);
     const lastTimeRef = useRef<number>(0);
+
+    useEffect(() => {
+        onStatsUpdateRef.current = onStatsUpdate;
+    }, [onStatsUpdate]);
 
     useEffect(() => {
         latestSpeedRef.current = speedStr || '';
@@ -36,13 +72,26 @@ export function useChartHistory({ downloadId, speedStr, downloadedSize, totalSiz
         if (!isDownloading) {
             lastMBRef.current = 0;
             lastTimeRef.current = 0;
+            if (onStatsUpdateRef.current) {
+                const totalSecs = elapsedSecs !== undefined && elapsedSecs > 0 ? elapsedSecs : accumulatedTimeRef.current;
+                const mins = Math.floor(totalSecs / 60);
+                const secs = totalSecs % 60;
+                const durStr = `${mins}:${secs.toString().padStart(2, '0')}`;
+                onStatsUpdateRef.current(formatChartSpeed(0), durStr);
+            }
             return;
         }
         
         const interval = setInterval(() => {
             const now = Date.now();
-            accumulatedTimeRef.current += 1;
-            const elapsed = accumulatedTimeRef.current;
+            let elapsed = accumulatedTimeRef.current + 1;
+
+            if (startedAt && startedAt > 0) {
+                const currentSessionSecs = Math.max(0, Math.floor((now - startedAt) / 1000));
+                elapsed = (elapsedSecs || 0) + currentSessionSecs;
+            }
+
+            accumulatedTimeRef.current = elapsed;
             
             let currentSpeed = parseSpeed(latestSpeedRef.current);
             
@@ -84,15 +133,15 @@ export function useChartHistory({ downloadId, speedStr, downloadedSize, totalSiz
                 const avgSpeed = totalSpeedSum / next.length;
                 next[next.length - 1].avg = avgSpeed;
 
-                if (onStatsUpdate) {
+                if (onStatsUpdateRef.current) {
                     const mins = Math.floor(elapsed / 60);
                     const secs = elapsed % 60;
                     const durStr = `${mins}:${secs.toString().padStart(2, '0')}`;
-                    onStatsUpdate(formatChartSpeed(avgSpeed), durStr);
+                    onStatsUpdateRef.current(formatChartSpeed(avgSpeed), durStr);
                 }
 
                 if (downloadId) {
-                    globalHistoryCache.set(downloadId, { history: next, accumulatedTime: elapsed });
+                    saveStoredHistory(downloadId, { history: next, accumulatedTime: elapsed });
                 }
 
                 return next;
@@ -100,7 +149,7 @@ export function useChartHistory({ downloadId, speedStr, downloadedSize, totalSiz
         }, 1000);
         
         return () => clearInterval(interval);
-    }, [isDownloading, onStatsUpdate, downloadId]);
+    }, [isDownloading, startedAt, elapsedSecs, downloadId]);
 
     return history;
 }

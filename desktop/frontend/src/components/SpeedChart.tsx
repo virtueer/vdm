@@ -19,6 +19,8 @@ interface SpeedChartProps {
     totalSize?: string;
     progress?: number;
     isDownloading: boolean;
+    startedAt?: number;
+    elapsedSecs?: number;
     onStatsUpdate?: (avgSpeed: string, duration: string) => void;
 }
 

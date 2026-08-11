@@ -8,21 +8,17 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as application$0 from "../github.com/wailsapp/wails/v3/pkg/application/models.js";
-
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as $models from "./models.js";
+import * as config$0 from "./internal/config/models.js";
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as models$0 from "./internal/models/models.js";
 
-/**
- * AddDownload is called by the server.go or frontend when a new download request arrives
- */
 export function AddDownload(url: string, typ: string, size: string, pageUrl: string, title: string, formatId: string): $CancellablePromise<void> {
     return $Call.ByID(421089748, url, typ, size, pageUrl, title, formatId);
 }
 
-/**
- * CancelDownload kills the process and deletes the downloaded files
- */
 export function CancelDownload(id: string): $CancellablePromise<void> {
     return $Call.ByID(2532515671, id);
 }
@@ -31,7 +27,7 @@ export function ClearTerminalLogs(): $CancellablePromise<void> {
     return $Call.ByID(2297066145);
 }
 
-export function GetConfig(): $CancellablePromise<$models.AppConfig> {
+export function GetConfig(): $CancellablePromise<config$0.AppConfig> {
     return $Call.ByID(1200034045);
 }
 
@@ -39,10 +35,7 @@ export function GetDownloadLogs(downloadID: string): $CancellablePromise<string[
     return $Call.ByID(3546972680, downloadID);
 }
 
-/**
- * GetDownloads is exposed to frontend
- */
-export function GetDownloads(): $CancellablePromise<$models.DownloadItem[] | null> {
+export function GetDownloads(): $CancellablePromise<models$0.DownloadItem[] | null> {
     return $Call.ByID(3093261880);
 }
 
@@ -50,56 +43,30 @@ export function GetTerminalLogs(): $CancellablePromise<string[] | null> {
     return $Call.ByID(2244485744);
 }
 
-/**
- * GetYouTubeFormats fetches format list for YouTube videos using yt-dlp --dump-single-json
- */
-export function GetYouTubeFormats(u: string): $CancellablePromise<$models.YouTubeFormat[] | null> {
+export function GetYouTubeFormats(u: string): $CancellablePromise<models$0.YouTubeFormat[] | null> {
     return $Call.ByID(991983236, u);
 }
 
-export function Logf(format: string, ...args: any[]): $CancellablePromise<void> {
-    return $Call.ByID(4095215453, format, args);
-}
-
-/**
- * PauseDownload kills the current download process but keeps the state so it can be resumed
- */
 export function PauseDownload(id: string): $CancellablePromise<void> {
     return $Call.ByID(1028494649, id);
 }
 
-/**
- * RemoveDownload deletes the download completely from the list and database
- */
 export function RemoveDownload(id: string, deleteFile: boolean): $CancellablePromise<void> {
     return $Call.ByID(3155670617, id, deleteFile);
 }
 
-/**
- * ResumeDownload re-starts a paused download
- */
 export function ResumeDownload(id: string): $CancellablePromise<void> {
     return $Call.ByID(687612914, id);
 }
 
-/**
- * RetryDownload re-starts an errored or cancelled download
- */
 export function RetryDownload(id: string): $CancellablePromise<void> {
     return $Call.ByID(2868588333, id);
 }
 
-export function SaveConfig(config: $models.AppConfig): $CancellablePromise<void> {
-    return $Call.ByID(3442292638, config);
+export function SaveConfig(cfg: config$0.AppConfig): $CancellablePromise<void> {
+    return $Call.ByID(3442292638, cfg);
 }
 
-export function SaveDownloadLog(downloadID: string, msg: string): $CancellablePromise<void> {
-    return $Call.ByID(2450373090, downloadID, msg);
-}
-
-/**
- * SetDownloadFormat updates format choice for a download
- */
 export function SetDownloadFormat(id: string, formatId: string): $CancellablePromise<void> {
     return $Call.ByID(3058948344, id, formatId);
 }
@@ -112,15 +79,8 @@ export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePr
     return $Call.ByID(3654517795, w);
 }
 
-/**
- * ShowInFolder opens the file explorer and selects the downloaded file
- */
 export function ShowInFolder(id: string): $CancellablePromise<void> {
     return $Call.ByID(1225131967, id);
-}
-
-export function StartDownloadProcess(id: string, downloadUrl: string): $CancellablePromise<void> {
-    return $Call.ByID(377378744, id, downloadUrl);
 }
 
 export function StartServer(): $CancellablePromise<void> {

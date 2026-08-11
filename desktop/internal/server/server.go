@@ -1,9 +1,11 @@
-package main
+package server
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"vdm/internal/config"
+	"vdm/internal/downloader"
 )
 
 type DownloadRequest struct {
@@ -16,18 +18,17 @@ type DownloadRequest struct {
 }
 
 type Server struct {
-	app *App
+	manager *downloader.Manager
 }
 
-func NewServer(app *App) *Server {
-	return &Server{app: app}
+func NewServer(manager *downloader.Manager) *Server {
+	return &Server{manager: manager}
 }
 
 func (s *Server) Start() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/api/download", func(w http.ResponseWriter, r *http.Request) {
-		// Handle CORS
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -48,9 +49,8 @@ func (s *Server) Start() {
 			return
 		}
 
-		// Pass to download manager via app
-		if s.app != nil {
-			s.app.AddDownload(req.URL, req.Type, req.Size, req.PageURL, req.Title, req.FormatID)
+		if s.manager != nil {
+			s.manager.AddDownload(req.URL, req.Type, req.Size, req.PageURL, req.Title, req.FormatID)
 		}
 
 		w.WriteHeader(http.StatusOK)
@@ -58,7 +58,6 @@ func (s *Server) Start() {
 	})
 
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		// Handle CORS
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 
 		w.WriteHeader(http.StatusOK)
@@ -66,7 +65,6 @@ func (s *Server) Start() {
 	})
 
 	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
-		// Handle CORS
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
@@ -78,18 +76,18 @@ func (s *Server) Start() {
 
 		if r.Method == http.MethodGet {
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(GlobalConfig)
+			json.NewEncoder(w).Encode(config.GlobalConfig)
 			return
 		}
 
 		if r.Method == http.MethodPost {
-			var config AppConfig
-			if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			var cfg config.AppConfig
+			if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			GlobalConfig = config
-			saveConfig()
+			config.GlobalConfig = cfg
+			config.SaveConfig()
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]string{"status": "saved"})
 			return

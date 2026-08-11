@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { FileVideo, Terminal } from "lucide-react";
+import { FileVideo, Terminal, Copy, Check } from "lucide-react";
 import type { DownloadItem, ProbeInfo } from "../../types/download";
 import { getFilenameFromUrl } from "../../utils/formatters";
 import { SpeedChart } from "../SpeedChart";
@@ -31,6 +31,25 @@ export function DownloadCard({
     const filename = getFilenameFromUrl(item.url);
     const [expanded, setExpanded] = useState(false);
     const [stats, setStats] = useState({ avgSpeed: '', duration: '' });
+    const [copiedUrl, setCopiedUrl] = useState(false);
+
+    const handleCopyUrl = async (e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            await navigator.clipboard.writeText(item.url);
+            setCopiedUrl(true);
+            setTimeout(() => setCopiedUrl(false), 1500);
+        } catch(err) {}
+    };
+
+    const handleStatsUpdate = useCallback((avgSpeed: string, duration: string) => {
+        setStats(prev => {
+            if (prev.avgSpeed === avgSpeed && prev.duration === duration) {
+                return prev;
+            }
+            return { avgSpeed, duration };
+        });
+    }, []);
     
     let badgeVariant: "default" | "secondary" | "destructive" | "outline" = "secondary";
     let statusText = item.status;
@@ -55,8 +74,23 @@ export function DownloadCard({
                     
                     <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                            <h4 className="font-medium text-sm truncate pr-4" title={item.url}>{item.title || filename}</h4>
-                            <div className="flex items-center gap-1.5">
+                            <div 
+                                onClick={handleCopyUrl} 
+                                className="flex items-center gap-1.5 min-w-0 cursor-pointer group/title mr-2"
+                                title="Click to copy download URL"
+                            >
+                                <h4 className="font-medium text-sm truncate group-hover/title:text-primary transition-colors">
+                                    {item.title || filename}
+                                </h4>
+                                {copiedUrl ? (
+                                    <span className="text-[10px] text-emerald-500 dark:text-emerald-400 font-mono flex items-center gap-0.5 shrink-0 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                                        <Check className="w-3 h-3" /> Copied!
+                                    </span>
+                                ) : (
+                                    <Copy className="w-3 h-3 text-muted-foreground opacity-0 group-hover/title:opacity-100 transition-opacity shrink-0" />
+                                )}
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
                                 {item.formatId && (
                                     <Badge variant="outline" className="text-[10px] shrink-0 border-orange-500/50 text-orange-600 dark:text-orange-400 font-mono">
                                         -f {item.formatId}
@@ -130,7 +164,9 @@ export function DownloadCard({
                         totalSize={item.totalSize || item.size}
                         progress={progress}
                         isDownloading={item.status === 'downloading'} 
-                        onStatsUpdate={(avg, dur) => setStats({ avgSpeed: avg, duration: dur })} 
+                        startedAt={item.startedAt}
+                        elapsedSecs={item.elapsedSecs}
+                        onStatsUpdate={handleStatsUpdate} 
                     />
                 </div>
             )}

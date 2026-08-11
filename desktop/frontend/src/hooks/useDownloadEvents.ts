@@ -21,7 +21,7 @@ export function useDownloadEvents(onNewYouTubeDownloadWithoutFormat?: (item: { i
             Events.On("new_download", (evt: any) => {
                 const data = evt?.data ?? evt;
                 if (data && data.id) {
-                    setDownloads(prev => prev.find(d => d.id === data.id) ? prev : [data, ...prev]);
+                    setDownloads(prev => prev.find(d => String(d.id) === String(data.id)) ? prev : [data, ...prev]);
                     if (isYouTubeUrl(data.url) && !data.formatId && onNewYouTubeDownloadWithoutFormat) {
                         onNewYouTubeDownloadWithoutFormat({ id: data.id, url: data.url, title: data.title });
                     }
@@ -31,13 +31,13 @@ export function useDownloadEvents(onNewYouTubeDownloadWithoutFormat?: (item: { i
                 const data = evt?.data ?? evt;
                 if (data && data.id) {
                     setDownloads(prev => prev.map(d => {
-                        if (d.id === data.id) {
-                            const isPausedOrCancelled = data.status === 'paused' || data.status === 'cancelled';
+                        if (String(d.id) === String(data.id)) {
+                            const isPausedOrCancelledOrCompleted = data.status === 'paused' || data.status === 'cancelled' || data.status === 'completed';
                             return {
                                 ...d,
                                 ...data,
-                                progress: data.progress !== undefined && data.progress !== null ? data.progress : d.progress,
-                                speed: isPausedOrCancelled ? '' : (data.speed !== undefined ? data.speed : d.speed),
+                                progress: data.status === 'completed' ? 100 : (data.progress !== undefined && data.progress !== null ? data.progress : d.progress),
+                                speed: isPausedOrCancelledOrCompleted ? '' : (data.speed !== undefined ? data.speed : d.speed),
                                 downloadedSize: data.downloadedSize || d.downloadedSize,
                                 totalSize: data.totalSize || d.totalSize,
                             };
@@ -51,8 +51,10 @@ export function useDownloadEvents(onNewYouTubeDownloadWithoutFormat?: (item: { i
                 if (data && data.id) {
                     const parsedPct = parseFloat(data.percentage);
                     setDownloads(prev => prev.map(d => {
-                        if (d.id === data.id) {
-                            if (d.status === 'cancelled' || d.status === 'completed') return d;
+                        if (String(d.id) === String(data.id)) {
+                            if (d.status === 'cancelled' || d.status === 'completed' || d.status === 'paused' || d.status === 'error') {
+                                return d;
+                            }
                             return {
                                 ...d,
                                 status: 'downloading',
@@ -66,7 +68,14 @@ export function useDownloadEvents(onNewYouTubeDownloadWithoutFormat?: (item: { i
                     }));
                 }
             }),
-            Events.On("download_removed", (evt: any) => evt.data && setDownloads(prev => prev.filter(d => d.id !== evt.data))),
+            Events.On("download_removed", (evt: any) => {
+                const id = evt?.data ?? evt;
+                if (id) {
+                    const idStr = String(id);
+                    try { localStorage.removeItem(`vdm_chart_${idStr}`); } catch(e) {}
+                    setDownloads(prev => prev.filter(d => String(d.id) !== idStr));
+                }
+            }),
             Events.On("log", (evt: any) => {
                 if (evt.data) {
                     setLogs(prev => {
