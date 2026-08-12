@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -e
+
+echo "🔍 Running pre-commit lint checks..."
+
+# 1. Desktop Frontend (Biome)
+if [ -d "desktop/frontend" ]; then
+    echo "🧹 Linting & formatting desktop/frontend with Biome..."
+    (cd desktop/frontend && pnpm run lint)
+    git add desktop/frontend/src desktop/frontend/biome.json desktop/frontend/package.json
+fi
+
+# 2. Extension Popup App (Biome)
+if [ -d "extension/popup-app" ]; then
+    echo "🧹 Linting & formatting extension/popup-app with Biome..."
+    (cd extension/popup-app && pnpm run lint)
+    git add extension/popup-app/src extension/popup-app/biome.json extension/popup-app/package.json
+fi
+
+# 3. Desktop Go Backend (golangci-lint)
+if [ -d "desktop" ]; then
+    echo "🐹 Running golangci-lint on desktop Go code..."
+    GOPATH_BIN="$(go env GOPATH)/bin"
+    PATH="$GOPATH_BIN:$PATH"
+    (cd desktop && golangci-lint run ./...)
+fi
+
+echo "✅ All pre-commit lint checks passed successfully!"
