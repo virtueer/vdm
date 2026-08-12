@@ -12,18 +12,14 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
 
-    "lib": [
-      "DOM",
-      "DOM.Iterable",
-      "ESNext",
-    ],
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
 
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": false,
     "noImplicitAny": false,
     "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
+    "noFallthroughCasesInSwitch": true
   },
   "include": ["src", "bindings"]
 }
