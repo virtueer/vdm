@@ -33,9 +33,10 @@ func (s *Store) LoadHistory() []models.DownloadItem {
 			continue
 		}
 
-		if i.Status == "downloading" || i.Status == "pending" {
+		switch i.Status {
+		case "downloading", "pending":
 			i.Status = "paused"
-		} else if i.Status == "completed" {
+		case "completed":
 			i.Progress = 100
 			i.StatusMsg = "Completed"
 		}

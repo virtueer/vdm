@@ -3,6 +3,8 @@ bin/
 releases/
 desktop
 desktop.exe
+vdm
+vdm.exe
 frontend/dist/
 frontend/node_modules/
 frontend/bindings/

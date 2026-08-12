@@ -1,0 +1,21 @@
+version: "2"
+
+run:
+  timeout: 3m
+  tests: true
+
+linters:
+  disable:
+    - errcheck
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - copyloopvar
+
+issues:
+  exclude-dirs:
+    - "^bin$"
+    - "^build$"
+    - "^frontend$"

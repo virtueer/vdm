@@ -29,7 +29,9 @@ func (m *Manager) PauseDownload(id string) {
 				m.downloads[i].StartedAt = 0
 			}
 			title = item.Title
-			if title == "" { title = item.URL }
+			if title == "" {
+				title = item.URL
+			}
 			if m.wailsApp != nil {
 				m.wailsApp.Event.Emit("download_updated", m.downloads[i])
 				m.wailsApp.Event.Emit("download_log", map[string]string{
@@ -57,7 +59,9 @@ func (m *Manager) ResumeDownload(id string) {
 			m.downloads[i].StatusMsg = "Resuming..."
 			targetUrl = item.URL
 			title = item.Title
-			if title == "" { title = item.URL }
+			if title == "" {
+				title = item.URL
+			}
 			if m.wailsApp != nil {
 				m.wailsApp.Event.Emit("download_updated", m.downloads[i])
 			}
@@ -92,7 +96,9 @@ func (m *Manager) RetryDownload(id string) {
 			m.downloads[i].StatusMsg = "Retrying..."
 			targetUrl = item.URL
 			title = item.Title
-			if title == "" { title = item.URL }
+			if title == "" {
+				title = item.URL
+			}
 			if m.wailsApp != nil {
 				m.wailsApp.Event.Emit("download_updated", m.downloads[i])
 			}

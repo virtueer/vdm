@@ -71,7 +71,9 @@ func (m *Manager) CancelDownload(id string) {
 		if item.ID == id {
 			itemFound = true
 			title = item.Title
-			if title == "" { title = item.URL }
+			if title == "" {
+				title = item.URL
+			}
 			if item.Status != "completed" {
 				m.downloads[i].Status = "cancelled"
 				m.downloads[i].StatusMsg = "Cancelled"

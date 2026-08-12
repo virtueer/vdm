@@ -7,6 +7,7 @@ import (
 	"syscall"
 )
 
+//nolint:unused
 func prepareCmd(cmd *exec.Cmd) {
 	if cmd == nil {
 		return
