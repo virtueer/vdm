@@ -29,24 +29,6 @@ func (m *Manager) RemoveDownload(id string, deleteFile bool) {
 	}
 	m.mu.Unlock()
 
-	if deleteFile && fileToDelete != "" {
-		m.Logf("Deleting file for removed download: %s\n", fileToDelete)
-		os.Remove(fileToDelete)
-		os.Remove(fileToDelete + ".part")
-		os.Remove(fileToDelete + ".ytdl")
-		os.Remove(fileToDelete + ".aria2")
-
-		downloadDir := GetDownloadDir()
-		baseName := filepath.Base(fileToDelete)
-		if baseName != "" && baseName != "." {
-			finalPath := filepath.Join(downloadDir, baseName)
-			os.Remove(finalPath)
-			os.Remove(finalPath + ".part")
-			os.Remove(finalPath + ".ytdl")
-			os.Remove(finalPath + ".aria2")
-		}
-	}
-
 	if m.store != nil {
 		m.store.DeleteDownload(id)
 	}
@@ -55,6 +37,26 @@ func (m *Manager) RemoveDownload(id string, deleteFile bool) {
 		m.wailsApp.Event.Emit("download_removed", id)
 	}
 	m.SaveHistory()
+
+	if deleteFile && fileToDelete != "" {
+		go func() {
+			m.Logf("Deleting file for removed download: %s\n", fileToDelete)
+			os.Remove(fileToDelete)
+			os.Remove(fileToDelete + ".part")
+			os.Remove(fileToDelete + ".ytdl")
+			os.Remove(fileToDelete + ".aria2")
+
+			downloadDir := GetDownloadDir()
+			baseName := filepath.Base(fileToDelete)
+			if baseName != "" && baseName != "." {
+				finalPath := filepath.Join(downloadDir, baseName)
+				os.Remove(finalPath)
+				os.Remove(finalPath + ".part")
+				os.Remove(finalPath + ".ytdl")
+				os.Remove(finalPath + ".aria2")
+			}
+		}()
+	}
 }
 
 func (m *Manager) CancelDownload(id string) {
@@ -100,10 +102,12 @@ func (m *Manager) CancelDownload(id string) {
 	}
 
 	if itemFound && fileToDelete != "" {
-		m.Logf("Deleting partial file for cancelled download: %s\n", fileToDelete)
-		os.Remove(fileToDelete)
-		os.Remove(fileToDelete + ".part")
-		os.Remove(fileToDelete + ".ytdl")
-		os.Remove(fileToDelete + ".aria2")
+		go func() {
+			m.Logf("Deleting partial file for cancelled download: %s\n", fileToDelete)
+			os.Remove(fileToDelete)
+			os.Remove(fileToDelete + ".part")
+			os.Remove(fileToDelete + ".ytdl")
+			os.Remove(fileToDelete + ".aria2")
+		}()
 	}
 }

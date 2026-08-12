@@ -76,18 +76,22 @@ export function DownloadActions({
 
       {(item.status === 'downloading' || item.status === 'pending') && (
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => {
-              if (onUpdateItemStatus) onUpdateItemStatus(item.id, 'paused', 'Paused');
-              PauseDownload(item.id).catch(console.error);
-            }}
-            className="hover:text-primary hover:bg-primary/10"
-            title="Pause Download"
-          >
-            <Pause className="w-4 h-4 fill-current" />
-          </Button>
+          {!item.statusMsg?.includes('Moving') &&
+            !item.statusMsg?.includes('Merging') &&
+            item.statusMsg !== 'Processing...' && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  if (onUpdateItemStatus) onUpdateItemStatus(item.id, 'paused', 'Paused');
+                  PauseDownload(item.id).catch(console.error);
+                }}
+                className="hover:text-primary hover:bg-primary/10"
+                title="Pause Download"
+              >
+                <Pause className="w-4 h-4 fill-current" />
+              </Button>
+            )}
           <Button
             variant="ghost"
             size="icon"

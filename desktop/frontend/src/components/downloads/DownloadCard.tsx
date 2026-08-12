@@ -59,6 +59,9 @@ export function DownloadCard({
   if (item.status === 'pending') statusText = 'Pending';
   else if (item.status === 'downloading') {
     statusText = 'Downloading';
+    if (item.statusMsg?.includes('Moving')) statusText = 'Moving...';
+    else if (item.statusMsg?.includes('Merging')) statusText = 'Merging...';
+    else if (item.statusMsg === 'Processing...') statusText = 'Processing...';
     badgeVariant = 'default';
   } else if (item.status === 'paused') {
     statusText = 'Paused';
@@ -198,7 +201,13 @@ export function DownloadCard({
             downloadedSize={item.downloadedSize}
             totalSize={item.totalSize || item.size}
             progress={progress}
-            isDownloading={item.status === 'downloading'}
+            isDownloading={
+              item.status === 'downloading' &&
+              progress < 100 &&
+              item.statusMsg !== 'Processing...' &&
+              !item.statusMsg?.includes('Merging') &&
+              !item.statusMsg?.includes('Moving')
+            }
             startedAt={item.startedAt}
             elapsedSecs={item.elapsedSecs}
             onStatsUpdate={handleStatsUpdate}

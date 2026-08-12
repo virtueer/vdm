@@ -171,6 +171,6 @@ func (m *Manager) StartDownloadProcess(id string, downloadUrl string) {
 		}
 		m.Logf("Command started successfully\n")
 
-		m.handleStreamScanning(id, downloadUrl, stdout, stderr, cmd.Wait)
+		m.handleStreamScanning(id, downloadUrl, stdout, stderr, cmd, cancel)
 	}()
 }

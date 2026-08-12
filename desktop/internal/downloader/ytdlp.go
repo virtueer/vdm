@@ -12,7 +12,6 @@ import (
 )
 
 func BuildYouTubeCmd(ctx context.Context, downloadUrl, downloadDir, tempDir, itemPageUrl, formatId string) *exec.Cmd {
-	aria2cPath := config.GetDependencyPath("aria2c")
 	threads := fmt.Sprintf("%d", config.GlobalConfig.ConcurrentFragments)
 	outName := "%(title)s.%(ext)s"
 
@@ -21,9 +20,14 @@ func BuildYouTubeCmd(ctx context.Context, downloadUrl, downloadDir, tempDir, ite
 		"-P", "home:" + downloadDir,
 		"-P", "temp:" + tempDir,
 		"-o", outName,
+		"-N", threads,
+		"--concurrent-fragments", threads,
 		"--js-runtimes", "node",
-		"--downloader", aria2cPath,
-		"--downloader-args", fmt.Sprintf("aria2c:-c --auto-file-renaming=false --allow-overwrite=false -x %s -s %s -k 1M --min-split-size=1M --file-allocation=none --summary-interval=1", threads, threads),
+		"--extractor-args", "youtube:player_client=android,web",
+		"--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+		"--socket-timeout", "20",
+		"--retries", "10",
+		"--fragment-retries", "15",
 		"--retry-sleep", "fragment:2",
 		"--retry-sleep", "http:2",
 	}

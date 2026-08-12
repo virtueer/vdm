@@ -3,10 +3,18 @@ import { useEffect, useState } from 'react';
 import { GetConfig, GetDownloads, GetTerminalLogs } from '../../bindings/vdm/app';
 import type { AppConfig } from '../../bindings/vdm/models';
 import type { DownloadItem, ProbeInfo } from '../types/download';
-import { isYouTubeUrl } from '../utils/formatters';
+
+function normalizeEventData(evt: any): any {
+  if (!evt) return null;
+  let data = evt?.data ?? evt;
+  if (Array.isArray(data) && data.length > 0) {
+    data = data[0];
+  }
+  return data;
+}
 
 export function useDownloadEvents(
-  onNewYouTubeDownloadWithoutFormat?: (item: { id: string; url: string; title?: string }) => void
+  onNewYouTubeDownloadWithoutFormat?: (item: { id?: string; url: string; title?: string }) => void
 ) {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [config, setConfig] = useState<AppConfig | null>(null);
@@ -27,18 +35,21 @@ export function useDownloadEvents(
 
     const unsubs = [
       Events.On('new_download', (evt: any) => {
-        const data = evt?.data ?? evt;
+        const data = normalizeEventData(evt);
         if (data?.id) {
           setDownloads((prev) =>
             prev.find((d) => String(d.id) === String(data.id)) ? prev : [data, ...prev]
           );
-          if (isYouTubeUrl(data.url) && !data.formatId && onNewYouTubeDownloadWithoutFormat) {
-            onNewYouTubeDownloadWithoutFormat({ id: data.id, url: data.url, title: data.title });
-          }
+        }
+      }),
+      Events.On('new_youtube_download', (evt: any) => {
+        const data = normalizeEventData(evt);
+        if (data?.url && onNewYouTubeDownloadWithoutFormat) {
+          onNewYouTubeDownloadWithoutFormat({ url: data.url, title: data.title });
         }
       }),
       Events.On('download_updated', (evt: any) => {
-        const data = evt?.data ?? evt;
+        const data = normalizeEventData(evt);
         if (data?.id) {
           setDownloads((prev) =>
             prev.map((d) => {
@@ -71,7 +82,7 @@ export function useDownloadEvents(
         }
       }),
       Events.On('download_progress', (evt: any) => {
-        const data = evt?.data ?? evt;
+        const data = normalizeEventData(evt);
         if (data?.id) {
           const parsedPct = parseFloat(data.percentage);
           setDownloads((prev) =>
@@ -85,10 +96,14 @@ export function useDownloadEvents(
                 ) {
                   return d;
                 }
+                const newProgress =
+                  !Number.isNaN(parsedPct) && (d.progress === undefined || parsedPct >= d.progress)
+                    ? parsedPct
+                    : d.progress;
                 return {
                   ...d,
                   status: 'downloading',
-                  progress: !Number.isNaN(parsedPct) ? parsedPct : d.progress,
+                  progress: newProgress,
                   speed: data.speed !== undefined ? data.speed : d.speed,
                   downloadedSize: data.downloaded || d.downloadedSize,
                   totalSize: data.total || d.totalSize,
@@ -100,7 +115,8 @@ export function useDownloadEvents(
         }
       }),
       Events.On('download_removed', (evt: any) => {
-        const id = evt?.data ?? evt;
+        const data = normalizeEventData(evt);
+        const id = data?.id ?? data;
         if (id) {
           const idStr = String(id);
           try {
@@ -110,15 +126,16 @@ export function useDownloadEvents(
         }
       }),
       Events.On('log', (evt: any) => {
-        if (evt.data) {
+        const data = normalizeEventData(evt);
+        if (data) {
           setLogs((prev) => {
-            const newLogs = [...prev, evt.data];
+            const newLogs = [...prev, typeof data === 'string' ? data : JSON.stringify(data)];
             return newLogs.length > 1000 ? newLogs.slice(newLogs.length - 1000) : newLogs;
           });
         }
       }),
       Events.On('download_log', (evt: any) => {
-        const data = evt?.data ?? evt;
+        const data = normalizeEventData(evt);
         if (data?.id && data.message) {
           setDownloadLogs((prev) => {
             const existingLogs = prev[data.id] || [];

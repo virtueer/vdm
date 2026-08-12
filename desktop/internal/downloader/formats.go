@@ -14,7 +14,15 @@ func GetYouTubeFormats(u string, logFn func(string, ...interface{})) ([]models.Y
 	if logFn != nil {
 		logFn("Fetching YouTube formats for: %s\n", u)
 	}
-	cmd := exec.Command(ytdlpPath, "--dump-single-json", "--no-playlist", "--js-runtimes", "node", u)
+	args := []string{
+		"--dump-single-json",
+		"--no-playlist",
+		"--js-runtimes", "node",
+		"--extractor-args", "youtube:player_client=android,web",
+		"--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+		u,
+	}
+	cmd := exec.Command(ytdlpPath, args...)
 	var out bytes.Buffer
 	var errOut bytes.Buffer
 	cmd.Stdout = &out

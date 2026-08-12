@@ -97,7 +97,23 @@ export function useChartHistory({
         const mins = Math.floor(totalSecs / 60);
         const secs = totalSecs % 60;
         const durStr = `${mins}:${secs.toString().padStart(2, '0')}`;
-        onStatsUpdateRef.current(formatChartSpeed(0), durStr);
+
+        let avgVal = 0;
+        if (history.length > 0) {
+          const nonZero = history.filter((h) => h.net && h.net > 0);
+          if (nonZero.length > 0) {
+            avgVal = nonZero.reduce((sum, h) => sum + h.net, 0) / nonZero.length;
+          } else {
+            const sum = history.reduce((sum, h) => sum + (h.net || 0), 0);
+            avgVal = sum / history.length;
+          }
+        } else {
+          const dlMB = parseSizeToMB(downloadedSize || totalSize);
+          if (dlMB > 0 && totalSecs > 0) {
+            avgVal = dlMB / totalSecs;
+          }
+        }
+        onStatsUpdateRef.current(formatChartSpeed(avgVal), durStr);
       }
       return;
     }
@@ -172,7 +188,17 @@ export function useChartHistory({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isDownloading, startedAt, elapsedSecs, downloadId]);
+  }, [
+    isDownloading,
+    startedAt,
+    elapsedSecs,
+    downloadId,
+    history.filter,
+    totalSize,
+    history.reduce,
+    history.length,
+    downloadedSize,
+  ]);
 
   return history;
 }

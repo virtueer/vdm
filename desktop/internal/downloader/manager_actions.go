@@ -29,9 +29,18 @@ func (m *Manager) SetDownloadFormat(id string, formatId string) {
 func (m *Manager) AddDownload(urlStr, typ, size, pageUrl, title, formatId string) {
 	m.Logf("New download request: %s (from %s, title: %s, format: %s)\n", urlStr, pageUrl, title, formatId)
 
-	status := "pending"
 	if IsYouTube(urlStr) && formatId == "" {
-		status = "paused"
+		if m.wailsApp != nil {
+			m.wailsApp.Event.Emit("new_youtube_download", map[string]string{
+				"url":   urlStr,
+				"title": title,
+			})
+		}
+		if m.mainWindow != nil {
+			m.mainWindow.Show()
+			m.mainWindow.Focus()
+		}
+		return
 	}
 
 	nowMs := time.Now().UnixMilli()
@@ -40,7 +49,7 @@ func (m *Manager) AddDownload(urlStr, typ, size, pageUrl, title, formatId string
 		URL:       urlStr,
 		Type:      typ,
 		Size:      size,
-		Status:    status,
+		Status:    "pending",
 		PageURL:   pageUrl,
 		Title:     title,
 		FormatID:  formatId,
@@ -61,9 +70,7 @@ func (m *Manager) AddDownload(urlStr, typ, size, pageUrl, title, formatId string
 		m.mainWindow.Focus()
 	}
 
-	if !IsYouTube(urlStr) || formatId != "" {
-		m.StartDownloadProcess(item.ID, urlStr)
-	}
+	m.StartDownloadProcess(item.ID, urlStr)
 }
 
 func (m *Manager) ShowInFolder(id string) {

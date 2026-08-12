@@ -36,3 +36,5 @@ extension/popup-app/node_modules/
 *.swp
 
 .aider*
+
+.pnpm-store

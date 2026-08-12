@@ -9,8 +9,10 @@ import (
 	"time"
 )
 
-func (m *Manager) scanStdoutStream(id string, stdout io.ReadCloser, lastEmitMs *int64) {
+func (m *Manager) scanStdoutStream(id string, stdout io.ReadCloser, lastEmitMs *int64, moveFilesChan chan<- struct{}) {
 	scanner := bufio.NewScanner(stdout)
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
 	scanner.Split(splitCRLF)
 	for scanner.Scan() {
 		text := strings.TrimSpace(scanner.Text())
@@ -21,14 +23,32 @@ func (m *Manager) scanStdoutStream(id string, stdout io.ReadCloser, lastEmitMs *
 		}
 
 		var destFile string
-		if match := YtDlpMoveFilesRegex.FindStringSubmatch(text); match != nil {
-			destFile = strings.TrimSpace(match[1])
+		isFinalMove := false
+
+		if strings.HasPrefix(text, "[MoveFiles]") {
+			isFinalMove = true
+			if idx := strings.Index(text, " to "); idx != -1 {
+				destFile = strings.Trim(strings.TrimSpace(text[idx+4:]), "\"")
+			}
+		} else if strings.Contains(text, "has already been downloaded") {
+			isFinalMove = true
+			if idx := strings.Index(text, "[download] "); idx != -1 {
+				rest := text[idx+11:]
+				if endIdx := strings.Index(rest, " has already been downloaded"); endIdx != -1 {
+					destFile = strings.TrimSpace(rest[:endIdx])
+				}
+			}
 		} else if match := YtDlpDestRegex.FindStringSubmatch(text); match != nil {
-			destFile = strings.TrimSpace(match[1])
-		} else if match := YtDlpAlreadyDestRegex.FindStringSubmatch(text); match != nil {
 			destFile = strings.TrimSpace(match[1])
 		} else if match := YtDlpMergerRegex.FindStringSubmatch(text); match != nil {
 			destFile = strings.TrimSpace(match[1])
+		}
+
+		if isFinalMove && moveFilesChan != nil {
+			select {
+			case moveFilesChan <- struct{}{}:
+			default:
+			}
 		}
 
 		if destFile != "" {
@@ -61,19 +81,23 @@ func (m *Manager) scanStdoutStream(id string, stdout io.ReadCloser, lastEmitMs *
 						m.mu.Unlock()
 						return
 					}
-					m.downloads[i].Progress = pct
-					if pct >= 100.0 {
-						m.downloads[i].Status = "completed"
-						m.downloads[i].StatusMsg = "Completed"
+					if pct >= m.downloads[i].Progress {
+						m.downloads[i].Progress = pct
+					}
+					if pct >= 100.0 || m.downloads[i].Progress >= 100.0 {
 						m.downloads[i].Progress = 100.0
 						m.downloads[i].Speed = ""
-						if m.downloads[i].StartedAt > 0 {
-							m.downloads[i].ElapsedSecs += (time.Now().UnixMilli() - m.downloads[i].StartedAt) / 1000
-							m.downloads[i].StartedAt = 0
+						if m.downloads[i].StatusMsg == "" || m.downloads[i].StatusMsg == "Downloading..." || m.downloads[i].StatusMsg == "Resuming..." || m.downloads[i].StatusMsg == "Retrying..." {
+							m.downloads[i].StatusMsg = "Processing..."
 						}
-						saveNeeded = true
+						if moveFilesChan != nil {
+							select {
+							case moveFilesChan <- struct{}{}:
+							default:
+							}
+						}
 					} else {
-						if m.downloads[i].StatusMsg == "" || m.downloads[i].StatusMsg == "Writing temporary cookies..." || m.downloads[i].StatusMsg == "Resuming..." || m.downloads[i].StatusMsg == "Retrying..." || m.downloads[i].StatusMsg == "Paused" || m.downloads[i].StatusMsg == "Pending" {
+						if m.downloads[i].StatusMsg == "" || m.downloads[i].StatusMsg == "Writing temporary cookies..." || m.downloads[i].StatusMsg == "Resuming..." || m.downloads[i].StatusMsg == "Retrying..." || m.downloads[i].StatusMsg == "Paused" || m.downloads[i].StatusMsg == "Pending" || m.downloads[i].StatusMsg == "Processing..." {
 							m.downloads[i].StatusMsg = "Downloading..."
 						}
 						if speed != "" {
@@ -105,6 +129,7 @@ func (m *Manager) scanStdoutStream(id string, stdout io.ReadCloser, lastEmitMs *
 					if item.Status == "paused" || item.Status == "cancelled" || item.Status == "completed" || item.Status == "error" {
 						isInactive = true
 					}
+					payload["percentage"] = fmt.Sprintf("%.1f", item.Progress)
 					break
 				}
 			}

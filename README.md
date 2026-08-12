@@ -101,12 +101,21 @@ You can find all outputs in the `desktop/releases/` folder.
 
 The Chrome extension must be installed for the application to capture videos.
 
-1. Open **Google Chrome** or a Chromium-based browser (Brave, Edge, etc.).
-2. Type `chrome://extensions/` in the address bar and press Enter.
-3. Toggle the **"Developer mode"** switch in the top right corner.
-4. Click the **"Load unpacked"** button in the top left.
-5. Select the **`extension`** folder from the project.
-6. You can pin the extension icon to the top right of your browser.
+1. (Optional) If you made changes to `extension/popup-app`:
+   - **Using Node.js / pnpm locally:**
+     ```bash
+     cd extension/popup-app && pnpm install && pnpm build
+     ```
+   - **Using Docker (No Node.js/pnpm required):**
+     ```bash
+     ./build-extension.sh
+     ```
+2. Open **Google Chrome** or a Chromium-based browser (Brave, Edge, etc.).
+3. Type `chrome://extensions/` in the address bar and press Enter.
+4. Toggle the **"Developer mode"** switch in the top right corner.
+5. Click the **"Load unpacked"** button in the top left.
+6. Select the main **`extension`** directory from the project (specifically the `extension` folder containing `manifest.json`, NOT `popup-app` or `popup-dist`).
+7. You can pin the extension icon to the top right of your browser.
 
 ---
 
@@ -128,3 +137,26 @@ The Chrome extension must be installed for the application to capture videos.
 - Perform operations (Preview, Download, Copy) in a separate extension popup window.
 - Modern, eye-friendly *Dark Mode* and *Glassmorphism* design in the desktop application.
 - Ultra-fast download support by splitting the video into 16 chunks, thanks to **aria2** integration.
+
+---
+
+## 🧹 Development & Git Hooks
+
+This repository uses automated **pre-commit hooks** (Biome for TypeScript/React linting & formatting, and `golangci-lint` for Go).
+
+### Enabling Git Hooks
+
+After cloning the repository, simply run `pnpm install` in the root directory:
+
+```bash
+pnpm install
+```
+
+This will automatically execute the `prepare` script and configure Git to use the `.githooks` folder.
+
+If Git hooks are not triggering automatically on `git commit`, you can enable them manually with:
+
+```bash
+git config core.hooksPath .githooks
+chmod +x .githooks/pre-commit
+```

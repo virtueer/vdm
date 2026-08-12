@@ -10,6 +10,8 @@ import (
 
 func (m *Manager) scanStderrStream(id string, stderr io.ReadCloser, lastEmitMs *int64) {
 	scanner := bufio.NewScanner(stderr)
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 1024*1024)
 	scanner.Split(splitCRLF)
 	for scanner.Scan() {
 		text := strings.TrimSpace(scanner.Text())
@@ -26,7 +28,9 @@ func (m *Manager) scanStderrStream(id string, stderr io.ReadCloser, lastEmitMs *
 						m.mu.Unlock()
 						return
 					}
-					m.downloads[i].Progress = pct
+					if pct >= m.downloads[i].Progress {
+						m.downloads[i].Progress = pct
+					}
 					if m.downloads[i].StatusMsg == "" || m.downloads[i].StatusMsg == "Writing temporary cookies..." || m.downloads[i].StatusMsg == "Resuming..." || m.downloads[i].StatusMsg == "Retrying..." || m.downloads[i].StatusMsg == "Paused" || m.downloads[i].StatusMsg == "Pending" {
 						m.downloads[i].StatusMsg = "Downloading..."
 					}
@@ -54,6 +58,7 @@ func (m *Manager) scanStderrStream(id string, stderr io.ReadCloser, lastEmitMs *
 					if item.Status == "paused" || item.Status == "cancelled" || item.Status == "completed" || item.Status == "error" {
 						isInactive = true
 					}
+					payload["percentage"] = fmt.Sprintf("%.1f", item.Progress)
 					break
 				}
 			}

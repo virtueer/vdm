@@ -26,6 +26,18 @@ func extractStatusMsg(text string) string {
 	if strings.Contains(text, "status=429") || strings.Contains(text, "Too Many Requests") {
 		return "Rate limited (HTTP 429), retrying..."
 	}
+	if strings.Contains(text, "status=403") || strings.Contains(text, "HTTP 403") || strings.Contains(text, "Forbidden") {
+		return "HTTP 403 Forbidden (aria2c error)"
+	}
+	if strings.HasPrefix(text, "ERROR:") || strings.HasPrefix(text, "[ERROR]") || strings.Contains(text, "ERROR:") || strings.Contains(text, "errorCode=") {
+		if idx := strings.Index(text, "ERROR:"); idx != -1 {
+			return strings.TrimSpace(text[idx:])
+		}
+		if idx := strings.Index(text, "errorCode="); idx != -1 {
+			return strings.TrimSpace(text[idx:])
+		}
+		return text
+	}
 	if strings.HasPrefix(text, "[youtube]") || strings.HasPrefix(text, "[info]") {
 		parts := strings.SplitN(text, ":", 2)
 		if len(parts) > 1 {
@@ -65,26 +77,16 @@ func (m *Manager) updateItemStatusMsg(id string, stMsg string) {
 		return
 	}
 	m.mu.Lock()
-	var saveNeeded bool
 	for i, item := range m.downloads {
 		if item.ID == id {
 			if item.Status == "paused" || item.Status == "cancelled" || item.Status == "completed" {
 				m.mu.Unlock()
 				return
 			}
-			lowerMsg := strings.ToLower(stMsg)
-			if strings.Contains(lowerMsg, "complete") || strings.Contains(lowerMsg, "completed") {
-				m.downloads[i].Status = "completed"
-				m.downloads[i].StatusMsg = "Completed"
-				m.downloads[i].Progress = 100.0
+			m.downloads[i].StatusMsg = stMsg
+			if strings.HasPrefix(stMsg, "ERROR:") || strings.HasPrefix(stMsg, "HTTP 403") {
+				m.downloads[i].Status = "error"
 				m.downloads[i].Speed = ""
-				if m.downloads[i].StartedAt > 0 {
-					m.downloads[i].ElapsedSecs += (time.Now().UnixMilli() - m.downloads[i].StartedAt) / 1000
-					m.downloads[i].StartedAt = 0
-				}
-				saveNeeded = true
-			} else {
-				m.downloads[i].StatusMsg = stMsg
 			}
 			if m.wailsApp != nil {
 				m.wailsApp.Event.Emit("download_updated", m.downloads[i])
@@ -93,10 +95,6 @@ func (m *Manager) updateItemStatusMsg(id string, stMsg string) {
 		}
 	}
 	m.mu.Unlock()
-
-	if saveNeeded {
-		m.SaveHistory()
-	}
 }
 
 func (m *Manager) finalizeDownloadStatus(id string, downloadUrl string, err error) {
