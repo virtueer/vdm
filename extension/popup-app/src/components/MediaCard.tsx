@@ -13,6 +13,26 @@ export function YoutubeIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
+export function ChromeIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      {...props}
+    >
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="4" />
+      <line x1="21.17" y1="8" x2="12" y2="8" />
+      <line x1="3.95" y1="6.06" x2="8.54" y2="14" />
+      <line x1="10.88" y1="21.94" x2="15.46" y2="14" />
+    </svg>
+  );
+}
+
 export function getYouTubeId(url: string): string | null {
   if (!url) return null;
   if (url.includes('v=')) {
@@ -30,9 +50,52 @@ export function getYouTubeId(url: string): string | null {
   return null;
 }
 
+function getSuggestedFilename(video: VideoLink, isAudio: boolean): string | undefined {
+  if (!video.title && !video.url) return undefined;
+
+  let baseName = (video.title || '').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+
+  // Check if baseName already has a standard file extension
+  const hasExt = /\.[a-z0-9]{2,5}$/i.test(baseName);
+  if (!hasExt) {
+    let ext = '';
+    try {
+      const u = new URL(video.url);
+      const pathname = u.pathname;
+      const match = pathname.match(/\.([a-z0-9]{2,5})$/i);
+      if (match) {
+        ext = match[0];
+      }
+    } catch (_) {}
+
+    if (!ext && video.mimeType) {
+      if (video.mimeType.includes('mp4')) ext = '.mp4';
+      else if (video.mimeType.includes('webm')) ext = '.webm';
+      else if (video.mimeType.includes('mp3') || video.mimeType.includes('mpeg')) ext = '.mp3';
+      else if (video.mimeType.includes('wav')) ext = '.wav';
+      else if (video.mimeType.includes('ogg')) ext = '.ogg';
+      else if (video.mimeType.includes('aac')) ext = '.aac';
+      else if (video.mimeType.includes('m4a')) ext = '.m4a';
+      else if (video.mimeType.includes('flv')) ext = '.flv';
+      else if (video.mimeType.includes('x-matroska') || video.mimeType.includes('mkv')) ext = '.mkv';
+    }
+
+    if (!ext) {
+      ext = isAudio || video.type === 'audio' ? '.mp3' : '.mp4';
+    }
+
+    if (baseName) {
+      baseName = `${baseName}${ext}`;
+    }
+  }
+
+  return baseName || undefined;
+}
+
 export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => void }) {
   const [copied, setCopied] = useState(false);
-  const [downloadStatus, setDownloadStatus] = useState('Download');
+  const [vdmStatus, setVdmStatus] = useState('VDM App');
+  const [chromeStatus, setChromeStatus] = useState('Chrome');
   const [resolution, setResolution] = useState<string | null>(video.resolution || null);
   const [testResult, setTestResult] = useState<string | null>(null);
 
@@ -59,9 +122,9 @@ export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => v
     }
   };
 
-  const handleDownload = async () => {
+  const handleDownloadVDM = async () => {
     try {
-      setDownloadStatus('Sending...');
+      setVdmStatus('Sending...');
       const res = await fetch('http://localhost:9614/api/download', {
         method: 'POST',
         headers: {
@@ -77,16 +140,48 @@ export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => v
       });
 
       if (res.ok) {
-        setDownloadStatus('Sent!');
-        setTimeout(() => setDownloadStatus('Download'), 1500);
+        setVdmStatus('Sent!');
+        setTimeout(() => setVdmStatus('VDM App'), 1500);
       } else {
         throw new Error('Server error');
       }
     } catch (err) {
       console.error('Failed to send to app: ', err);
-      setDownloadStatus('Failed');
-      setTimeout(() => setDownloadStatus('Download'), 1500);
+      setVdmStatus('Failed');
+      setTimeout(() => setVdmStatus('VDM App'), 1500);
       alert('Video Download Manager desktop app is not running or unreachable.');
+    }
+  };
+
+  const handleDownloadChrome = () => {
+    if (isYouTube) return;
+
+    setChromeStatus('Starting...');
+    const filename = getSuggestedFilename(video, isAudio);
+
+    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+      chrome.runtime.sendMessage(
+        {
+          action: 'downloadWithChrome',
+          url: video.url,
+          filename: filename,
+        },
+        (response) => {
+          if (response?.success) {
+            setChromeStatus('Started!');
+            setTimeout(() => setChromeStatus('Chrome'), 1500);
+          } else {
+            console.error('Chrome download failed:', response?.error);
+            setChromeStatus('Failed');
+            setTimeout(() => setChromeStatus('Chrome'), 1500);
+            alert(response?.error || 'Failed to start download in Chrome.');
+          }
+        }
+      );
+    } else {
+      console.log('Download with Chrome triggered locally:', { url: video.url, filename });
+      setChromeStatus('Started!');
+      setTimeout(() => setChromeStatus('Chrome'), 1500);
     }
   };
 
@@ -242,26 +337,48 @@ export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => v
           )}
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex items-center gap-1.5">
           <Button
-            onClick={handleDownload}
+            onClick={handleDownloadVDM}
             className="flex-1 h-8 text-xs font-medium shadow-sm transition-all"
-            variant={downloadStatus === 'Sent!' ? 'secondary' : 'default'}
+            variant={vdmStatus === 'Sent!' ? 'secondary' : 'default'}
+            title="Send to Video Download Manager desktop app"
           >
-            {downloadStatus === 'Sent!' ? (
-              <Check className="w-3.5 h-3.5 mr-1.5 text-green-500" />
+            {vdmStatus === 'Sent!' ? (
+              <Check className="w-3.5 h-3.5 mr-1 text-green-500" />
             ) : (
-              <Download className="w-3.5 h-3.5 mr-1.5" />
+              <Download className="w-3.5 h-3.5 mr-1" />
             )}
-            {downloadStatus}
+            {vdmStatus}
           </Button>
+
+          <Button
+            onClick={handleDownloadChrome}
+            disabled={isYouTube}
+            className="flex-1 h-8 text-xs font-medium shadow-sm transition-all"
+            variant={chromeStatus === 'Started!' ? 'secondary' : 'outline'}
+            title={
+              isYouTube
+                ? 'YouTube requires VDM desktop app (yt-dlp)'
+                : 'Download directly with Chrome browser'
+            }
+          >
+            {chromeStatus === 'Started!' ? (
+              <Check className="w-3.5 h-3.5 mr-1 text-green-500" />
+            ) : (
+              <ChromeIcon className="w-3.5 h-3.5 mr-1" />
+            )}
+            {chromeStatus}
+          </Button>
+
           <Button
             onClick={onHide}
-            variant="outline"
-            className="h-8 text-xs hover:bg-destructive/5 hover:text-destructive hover:border-destructive/30 transition-colors"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+            title="Hide Link"
           >
-            <EyeOff className="w-3.5 h-3.5 mr-1.5" />
-            Hide
+            <EyeOff className="w-3.5 h-3.5" />
           </Button>
         </div>
       </CardContent>

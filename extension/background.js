@@ -256,6 +256,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             chrome.action.setBadgeText({ text: '', tabId: tabId });
         }
         sendResponse({ success: true });
+    } else if (request.action === 'downloadWithChrome') {
+        const url = request.url;
+        let filename = request.filename || '';
+
+        if (filename) {
+            filename = filename.replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+        }
+
+        bypassedUrls.add(url);
+        try {
+            const u = new URL(url);
+            bypassedUrls.add(u.href);
+        } catch (e) {}
+
+        const downloadOptions = {
+            url: url,
+            saveAs: Boolean(request.saveAs)
+        };
+        if (filename) {
+            downloadOptions.filename = filename;
+        }
+
+        chrome.downloads.download(downloadOptions, (downloadId) => {
+            if (chrome.runtime.lastError) {
+                console.error('Chrome download failed:', chrome.runtime.lastError);
+                bypassedUrls.delete(url);
+                sendResponse({ success: false, error: chrome.runtime.lastError.message });
+            } else {
+                if (downloadId) {
+                    bypassedDownloadIds.add(downloadId);
+                }
+                setTimeout(() => {
+                    bypassedUrls.delete(url);
+                    if (downloadId) bypassedDownloadIds.delete(downloadId);
+                }, 30000);
+                sendResponse({ success: true, downloadId: downloadId });
+            }
+        });
+        return true;
+    }
+});
+
+// Bypassed downloads (initiated directly by user via Chrome download button)
+const bypassedDownloadIds = new Set();
+const bypassedUrls = new Set();
+
+// Clean up completed/interrupted downloads from bypass set
+chrome.downloads.onChanged.addListener((delta) => {
+    if (delta.state && (delta.state.current === 'complete' || delta.state.current === 'interrupted')) {
+        bypassedDownloadIds.delete(delta.id);
     }
 });
 
@@ -269,6 +319,13 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
     // Skip if auto-intercept is disabled
     if (!autoIntercept) return;
     
+    // Skip if download was explicitly initiated via Chrome
+    if (bypassedDownloadIds.has(downloadItem.id) ||
+        bypassedUrls.has(downloadItem.url) ||
+        (downloadItem.finalUrl && bypassedUrls.has(downloadItem.finalUrl))) {
+        return;
+    }
+
     // Skip if already completed or paused
     if (downloadItem.state && downloadItem.state !== 'in_progress') return;
     
