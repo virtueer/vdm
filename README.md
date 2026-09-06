@@ -1,6 +1,6 @@
 # VDM - Video Download Manager
 
-This project includes a Chrome Extension that automatically captures video streams (m3u8, mp4, etc.) you watch or load in the background, and a Desktop Application (Go & Wails v3) that quickly downloads these videos using powerful tools like **yt-dlp** and **aria2**.
+This project includes a Chrome Extension that automatically captures video streams (m3u8, mp4, etc.) you watch or load in the background, and a Desktop Application (Go & Wails v3) that quickly downloads these videos using **yt-dlp** (for YouTube/HLS) and a **pure Go native HTTP downloader** (for direct media files).
 
 ## Project Components
 
@@ -12,37 +12,35 @@ The project consists of two main folders:
 
 ## 🛠️ System Requirements
 
-In order for the application to download videos in the background, the following two tools must be installed on your system and added to your `PATH` (Environment Variables):
+In order for the application to download YouTube and HLS streams in the background, **yt-dlp** must be installed on your system (or downloaded automatically by VDM on first start):
 
 1. **yt-dlp**: Advanced video downloader tool.
-2. **aria2 (aria2c)**: Fast and multi-connection download utility.
 
 ### Installing Dependencies
 
 **Windows:**
 ```powershell
 # If using Scoop:
-scoop install yt-dlp aria2
+scoop install yt-dlp
 
 # Or if using Winget:
 winget install yt-dlp
-winget install aria2
 ```
 
 **macOS:**
 ```bash
-brew install yt-dlp aria2
+brew install yt-dlp
 ```
 
 **Linux (Debian/Ubuntu):**
 ```bash
 sudo apt update
-sudo apt install yt-dlp aria2
+sudo apt install yt-dlp
 ```
 
 **Linux (Arch/CachyOS etc.):**
 ```bash
-sudo pacman -S yt-dlp aria2
+sudo pacman -S yt-dlp
 ```
 
 ---
@@ -136,7 +134,7 @@ The Chrome extension must be installed for the application to capture videos.
 - Real-time tracking of HTML5 `<video>` tags within pages.
 - Perform operations (Preview, Download, Copy) in a separate extension popup window.
 - Modern, eye-friendly *Dark Mode* and *Glassmorphism* design in the desktop application.
-- Ultra-fast download support by splitting the video into 16 chunks, thanks to **aria2** integration.
+- Ultra-fast download support with pure Go native HTTP streaming and range resumption.
 
 ---
 
