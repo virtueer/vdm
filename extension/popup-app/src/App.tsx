@@ -1,4 +1,4 @@
-import { EyeOff, Settings, ToggleLeft } from 'lucide-react';
+import { EyeOff, Maximize2, Settings, ToggleLeft } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -75,19 +75,38 @@ export default function App() {
     }
   };
 
+  const handleOpenInTab = () => {
+    if (typeof chrome !== 'undefined' && chrome.tabs?.create && chrome.runtime?.getURL) {
+      chrome.tabs.create({ url: chrome.runtime.getURL('popup-dist/index.html') });
+    } else {
+      window.open(window.location.href, '_blank');
+    }
+  };
+
   return (
-    <div className="w-full flex flex-col h-[500px] bg-background">
+    <div className="w-full max-w-lg flex flex-col h-[500px] sm:h-screen bg-background shadow-md border-x border-border/50">
       <div className="flex items-center justify-between px-4 py-3 bg-primary text-primary-foreground shadow-sm">
         <h2 className="text-sm font-semibold m-0 tracking-tight">Video Download Manager</h2>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7 text-primary-foreground hover:bg-primary/80"
-          onClick={toggleAutoIntercept}
-          title={autoIntercept ? 'Auto-intercept is ON' : 'Auto-intercept is OFF'}
-        >
-          {autoIntercept ? <ToggleLeft className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-primary-foreground hover:bg-primary/80"
+            onClick={handleOpenInTab}
+            title="Eklentiyi Ayrı Sekmede Aç (Tam Ekran İzni İçin)"
+          >
+            <Maximize2 className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 text-primary-foreground hover:bg-primary/80"
+            onClick={toggleAutoIntercept}
+            title={autoIntercept ? 'Auto-intercept is ON' : 'Auto-intercept is OFF'}
+          >
+            {autoIntercept ? <ToggleLeft className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
+          </Button>
+        </div>
       </div>
 
       <div className="px-4 py-2 bg-muted/50 border-b">

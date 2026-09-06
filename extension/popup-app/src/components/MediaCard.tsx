@@ -1,6 +1,15 @@
 import type React from 'react';
-import { useState } from 'react';
-import { Check, Copy, Download, EyeOff, Search } from 'lucide-react';
+import { useRef, useState } from 'react';
+import {
+  Check,
+  Copy,
+  Download,
+  EyeOff,
+  ExternalLink,
+  Maximize2,
+  PictureInPicture2,
+  Search,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { VideoLink } from '../types';
@@ -98,6 +107,7 @@ export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => v
   const [chromeStatus, setChromeStatus] = useState('Chrome');
   const [resolution, setResolution] = useState<string | null>(video.resolution || null);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const urlString = video.url.length > 70 ? `${video.url.substring(0, 70)}...` : video.url;
   const isYouTube =
@@ -111,6 +121,47 @@ export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => v
       /\.(mp3|wav|m4a|aac|ogg|flac|mka)$/i.test(video.url) ||
       /_aud(\d+)?\.(txt|m3u8)$/i.test(video.url) ||
       /audio/i.test(video.url.split('/').pop() || ''));
+
+  const handleOpenInNewTab = () => {
+    if (typeof chrome !== 'undefined' && chrome.tabs?.create) {
+      chrome.tabs.create({ url: video.url });
+    } else {
+      window.open(video.url, '_blank');
+    }
+  };
+
+  const handleFullscreenOrNewTab = async () => {
+    if (videoRef.current) {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+          return;
+        }
+        await videoRef.current.requestFullscreen();
+      } catch (_err) {
+        // In extension popup, requestFullscreen is blocked by Chrome policy.
+        // Open directly in full browser tab for native player & fullscreen
+        handleOpenInNewTab();
+      }
+    } else {
+      handleOpenInNewTab();
+    }
+  };
+
+  const handlePictureInPicture = async () => {
+    if (videoRef.current) {
+      try {
+        if (document.pictureInPictureElement) {
+          await document.exitPictureInPicture();
+        } else {
+          await videoRef.current.requestPictureInPicture();
+        }
+      } catch (err) {
+        console.error('PiP failed, opening in tab instead:', err);
+        handleOpenInNewTab();
+      }
+    }
+  };
 
   const handleCopy = async () => {
     try {
@@ -263,6 +314,15 @@ export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => v
               variant="ghost"
               size="icon"
               className="h-6 w-6 shrink-0 rounded-full"
+              onClick={handleOpenInNewTab}
+              title="Yeni Sekmede / Tam Ekranda Aç"
+            >
+              <ExternalLink className="h-3.5 w-3.5 text-muted-foreground hover:text-primary" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 shrink-0 rounded-full"
               onClick={handleTestTitle}
               title="Test Title Extraction"
             >
@@ -304,9 +364,13 @@ export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => v
           {resolution && <span className="flex items-center text-primary/70">{resolution}</span>}
         </div>
 
-        <div className="mb-3 rounded-md overflow-hidden bg-black/5 flex items-center justify-center">
+        <div className="relative mb-3 rounded-md overflow-hidden bg-black/5 flex items-center justify-center group">
           {isYouTube ? (
-            <div className="relative w-full h-[140px] bg-black flex items-center justify-center group overflow-hidden">
+            <div
+              className="relative w-full h-[140px] bg-black flex items-center justify-center cursor-pointer group overflow-hidden"
+              onClick={handleOpenInNewTab}
+              title="YouTube videosunu yeni sekmede / tam ekranda aç"
+            >
               {ytVideoId ? (
                 <img
                   src={`https://img.youtube.com/vi/${ytVideoId}/hqdefault.jpg`}
@@ -317,23 +381,45 @@ export function MediaCard({ video, onHide }: { video: VideoLink; onHide: () => v
                   }}
                 />
               ) : null}
-              <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-1">
+              <div className="absolute inset-0 bg-black/40 flex flex-col items-center justify-center gap-1 transition-colors group-hover:bg-black/25">
                 <YoutubeIcon className="w-10 h-10 text-red-600 drop-shadow-md" />
-                <span className="text-[11px] text-white/90 font-medium px-2 py-0.5 bg-black/60 rounded">
+                <span className="text-[11px] text-white/90 font-medium px-2 py-0.5 bg-black/60 rounded flex items-center gap-1">
                   YouTube Video (yt-dlp)
+                  <ExternalLink className="w-3 h-3 ml-0.5 opacity-80" />
                 </span>
               </div>
             </div>
           ) : isAudio ? (
             <audio src={video.url} controls className="w-full h-10 outline-none" />
           ) : (
-            <video
-              src={`${video.url}${srcHash}`}
-              preload="metadata"
-              controls
-              onLoadedMetadata={handleLoadedMetadata}
-              className="w-full max-h-[160px] object-contain bg-black"
-            />
+            <div className="relative w-full">
+              <video
+                ref={videoRef}
+                src={`${video.url}${srcHash}`}
+                preload="metadata"
+                controls
+                onLoadedMetadata={handleLoadedMetadata}
+                className="w-full max-h-[160px] object-contain bg-black"
+              />
+              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-black/70 backdrop-blur-sm rounded-md p-0.5 shadow-sm">
+                <button
+                  type="button"
+                  onClick={handlePictureInPicture}
+                  className="p-1 text-white hover:text-primary-foreground hover:bg-white/20 transition-colors rounded"
+                  title="Picture-in-Picture (Pencereyi Ayır)"
+                >
+                  <PictureInPicture2 className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleFullscreenOrNewTab}
+                  className="p-1 text-white hover:text-primary-foreground hover:bg-white/20 transition-colors rounded"
+                  title="Tam Ekran / Yeni Sekmede Aç"
+                >
+                  <Maximize2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
           )}
         </div>
 
