@@ -384,7 +384,7 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 		}
 		close(jobs)
 
-		concurrency := 4
+		concurrency := 10
 		if len(segments) < concurrency {
 			concurrency = len(segments)
 		}
@@ -590,7 +590,8 @@ func downloadSegmentToFile(ctx context.Context, segURL, outPath string) (int64, 
 		return 0, err
 	}
 
-	n, err := io.Copy(f, resp.Body)
+	buf := make([]byte, 256*1024)
+	n, err := io.CopyBuffer(f, resp.Body, buf)
 	f.Close()
 	if err != nil {
 		_ = os.Remove(partPath)

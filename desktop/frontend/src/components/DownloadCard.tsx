@@ -105,6 +105,14 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
             <span>Hata (Detay)</span>
           </Badge>
         );
+      case 'queued':
+      case 'pending':
+        return (
+          <Badge variant="secondary" className="gap-1 bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 font-medium">
+            <Clock className="w-3 h-3 text-amber-500" />
+            <span>{item.statusMsg || 'Kuyrukta Bekliyor'}</span>
+          </Badge>
+        );
       default:
         return <Badge variant="secondary">Bekleniyor</Badge>;
     }
@@ -212,6 +220,31 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
                 <Play className="w-3.5 h-3.5" />
                 <span>Devam Et</span>
               </Button>
+            )}
+
+            {(item.status === 'queued' || item.status === 'pending') && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1 text-xs font-medium hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                  onClick={() => onResume(item.id)}
+                  title="Öncelikli Olarak Şimdi İndir"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  <span>Şimdi İndir</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1 text-xs font-medium hover:bg-amber-500/10 hover:text-amber-500 hover:border-amber-500/30"
+                  onClick={() => onPause(item.id)}
+                  title="Kuyruktan Çıkar / Duraklat"
+                >
+                  <Pause className="w-3.5 h-3.5" />
+                  <span>Duraklat</span>
+                </Button>
+              </>
             )}
 
             {isError && (

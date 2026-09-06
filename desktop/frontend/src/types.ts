@@ -3,7 +3,7 @@ export interface DownloadItem {
   url: string;
   title: string;
   destination: string;
-  status: 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
+  status: 'pending' | 'queued' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
   statusMsg: string;
   errorDetails?: string;
   progress: number;

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,21 +18,35 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
+var defaultTransport = &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
+	DisableKeepAlives:     false,
+	MaxIdleConns:          256,
+	MaxIdleConnsPerHost:   128,
+	MaxConnsPerHost:       0, // unlimited
+	IdleConnTimeout:       120 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 30 * time.Second,
+	ExpectContinueTimeout: 1 * time.Second,
+	ForceAttemptHTTP2:     true,
+	WriteBufferSize:       128 * 1024,
+	ReadBufferSize:        128 * 1024,
+	DialContext: (&net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+}
+
 var defaultClient = &http.Client{
-	Timeout: 0,
-	Transport: &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-		DisableKeepAlives:   false,
-		MaxIdleConns:        100,
-		IdleConnTimeout:     90 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-	},
+	Timeout:   0,
+	Transport: defaultTransport,
 }
 
 type Manager struct {
@@ -204,6 +219,52 @@ func (m *Manager) SetWindow(w *application.WebviewWindow) {
 	m.mainWindow = w
 }
 
+const MaxConcurrentActive = 2
+
+func (m *Manager) processQueueLocked() {
+	activeCount := 0
+	for _, item := range m.downloads {
+		if item.Status == "downloading" {
+			activeCount++
+		}
+	}
+
+	slotsAvailable := MaxConcurrentActive - activeCount
+	if slotsAvailable > 0 {
+		// Start oldest queued / pending items first (from end of slice to start)
+		for i := len(m.downloads) - 1; i >= 0 && slotsAvailable > 0; i-- {
+			if m.downloads[i].Status == "pending" || m.downloads[i].Status == "queued" {
+				id := m.downloads[i].ID
+				urlStr := m.downloads[i].URL
+				title := m.downloads[i].Title
+				m.downloads[i].Status = "downloading"
+				m.downloads[i].StatusMsg = "Starting..."
+				m.downloads[i].StartedAt = time.Now().UnixMilli()
+				m.saveItemLocked(m.downloads[i])
+				if m.wailsApp != nil {
+					m.wailsApp.Event.Emit("download_updated", m.downloads[i])
+				}
+				slotsAvailable--
+				go m.startDownloadProcess(id, urlStr, title)
+			}
+		}
+	}
+
+	// Update queue numbers for remaining waiting items
+	queuePos := 1
+	for i := len(m.downloads) - 1; i >= 0; i-- {
+		if m.downloads[i].Status == "queued" || m.downloads[i].Status == "pending" {
+			m.downloads[i].Status = "queued"
+			m.downloads[i].StatusMsg = fmt.Sprintf("Kuyrukta bekliyor (#%d)", queuePos)
+			queuePos++
+			m.saveItemLocked(m.downloads[i])
+			if m.wailsApp != nil {
+				m.wailsApp.Event.Emit("download_updated", m.downloads[i])
+			}
+		}
+	}
+}
+
 func (m *Manager) GetDownloads() []DownloadItem {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -234,13 +295,14 @@ func (m *Manager) AddDownload(urlStr, title string) string {
 		URL:       urlStr,
 		Title:     cleanedTitle,
 		Status:    "pending",
-		StatusMsg: "Starting...",
+		StatusMsg: "Kuyruğa alındı...",
 		CreatedAt: nowMs,
 	}
 
 	m.mu.Lock()
 	m.downloads = append([]DownloadItem{item}, m.downloads...)
 	m.saveItemLocked(item)
+	m.processQueueLocked()
 	m.mu.Unlock()
 
 	if m.wailsApp != nil {
@@ -252,32 +314,17 @@ func (m *Manager) AddDownload(urlStr, title string) string {
 		m.mainWindow.Focus()
 	}
 
-	go m.startDownloadProcess(id, urlStr, cleanedTitle)
 	return id
 }
 
 func (m *Manager) startDownloadProcess(id, downloadUrl, title string) {
 	ctx, cancel := context.WithCancel(context.Background())
-	nowMs := time.Now().UnixMilli()
 
 	m.mu.Lock()
 	if oldCancel, exists := m.cancelFuncs[id]; exists {
 		oldCancel()
 	}
 	m.cancelFuncs[id] = cancel
-
-	for i, item := range m.downloads {
-		if item.ID == id {
-			m.downloads[i].Status = "downloading"
-			m.downloads[i].StatusMsg = "Downloading..."
-			m.downloads[i].StartedAt = nowMs
-			m.saveItemLocked(m.downloads[i])
-			if m.wailsApp != nil {
-				m.wailsApp.Event.Emit("download_updated", m.downloads[i])
-			}
-			break
-		}
-	}
 	m.mu.Unlock()
 
 	defer func() {
@@ -308,7 +355,6 @@ func (m *Manager) startDownloadProcess(id, downloadUrl, title string) {
 	}
 	filename = sanitizeFilename(titleToUse) + ext
 	dest := filepath.Join(downloadDir, filename)
-	partFile := dest + ".part"
 
 	m.mu.Lock()
 	for i, item := range m.downloads {
@@ -331,6 +377,301 @@ func (m *Manager) startDownloadProcess(id, downloadUrl, title string) {
 		return
 	}
 
+	err := m.downloadDirect(ctx, id, downloadUrl, dest)
+	m.finalizeDownload(id, err)
+}
+
+type PartState struct {
+	Index       int   `json:"index"`
+	StartOffset int64 `json:"startOffset"`
+	EndOffset   int64 `json:"endOffset"`
+	Downloaded  int64 `json:"downloaded"`
+}
+
+type MultiPartState struct {
+	TotalBytes int64       `json:"totalBytes"`
+	Parts      []PartState `json:"parts"`
+}
+
+func (m *Manager) downloadDirect(ctx context.Context, id, downloadUrl, dest string) error {
+	partFile := dest + ".part"
+	stateFile := dest + ".vdm_state"
+
+	// Probe remote URL for range support & content length
+	probeReq, err := http.NewRequestWithContext(ctx, "HEAD", downloadUrl, nil)
+	if err != nil {
+		return fmt.Errorf("request creation failed: %w", err)
+	}
+	probeReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+	if parsedUrl, err := url.Parse(downloadUrl); err == nil {
+		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+		probeReq.Header.Set("Referer", origin+"/")
+		probeReq.Header.Set("Origin", origin)
+	}
+
+	var totalBytes int64 = -1
+	var supportsRange = false
+
+	if probeResp, err := defaultClient.Do(probeReq); err == nil {
+		if probeResp.StatusCode == http.StatusOK || probeResp.StatusCode == http.StatusPartialContent {
+			totalBytes = probeResp.ContentLength
+			if strings.EqualFold(probeResp.Header.Get("Accept-Ranges"), "bytes") || probeResp.StatusCode == http.StatusPartialContent {
+				supportsRange = true
+			}
+		}
+		probeResp.Body.Close()
+	}
+
+	// Double check with a 0-0 Range probe if HEAD was inconclusive
+	if !supportsRange || totalBytes <= 0 {
+		rangeReq, err := http.NewRequestWithContext(ctx, "GET", downloadUrl, nil)
+		if err == nil {
+			rangeReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+			rangeReq.Header.Set("Range", "bytes=0-0")
+			if rangeResp, err := defaultClient.Do(rangeReq); err == nil {
+				if rangeResp.StatusCode == http.StatusPartialContent {
+					supportsRange = true
+					cr := rangeResp.Header.Get("Content-Range")
+					if slashIdx := strings.LastIndex(cr, "/"); slashIdx != -1 {
+						if parsedLen, err := strconv.ParseInt(cr[slashIdx+1:], 10, 64); err == nil {
+							totalBytes = parsedLen
+						}
+					}
+				} else if rangeResp.StatusCode == http.StatusOK {
+					totalBytes = rangeResp.ContentLength
+				}
+				rangeResp.Body.Close()
+			}
+		}
+	}
+
+	// Use multi-part range downloading (8 to 16 parallel threads) if supported and >= 4MB
+	if supportsRange && totalBytes >= 4*1024*1024 {
+		return m.downloadMultipartRange(ctx, id, downloadUrl, dest, partFile, stateFile, totalBytes)
+	}
+
+	// Fallback to single stream download
+	return m.downloadSingleStream(ctx, id, downloadUrl, dest, partFile, totalBytes)
+}
+
+func (m *Manager) downloadMultipartRange(ctx context.Context, id, downloadUrl, dest, partFile, stateFile string, totalBytes int64) error {
+	numWorkers := 8
+	if totalBytes >= 30*1024*1024 {
+		numWorkers = 16
+	}
+
+	var state MultiPartState
+	var isResumed bool
+
+	if stateData, err := os.ReadFile(stateFile); err == nil {
+		if json.Unmarshal(stateData, &state) == nil && state.TotalBytes == totalBytes && len(state.Parts) > 0 {
+			isResumed = true
+			numWorkers = len(state.Parts)
+		}
+	}
+
+	if !isResumed {
+		partSize := totalBytes / int64(numWorkers)
+		state = MultiPartState{
+			TotalBytes: totalBytes,
+			Parts:      make([]PartState, numWorkers),
+		}
+		for i := 0; i < numWorkers; i++ {
+			start := int64(i) * partSize
+			end := start + partSize - 1
+			if i == numWorkers-1 {
+				end = totalBytes - 1
+			}
+			state.Parts[i] = PartState{
+				Index:       i,
+				StartOffset: start,
+				EndOffset:   end,
+				Downloaded:  0,
+			}
+		}
+	}
+
+	file, err := os.OpenFile(partFile, os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	if !isResumed {
+		_ = file.Truncate(totalBytes)
+	}
+
+	var totalDownloaded int64
+	for _, p := range state.Parts {
+		totalDownloaded += p.Downloaded
+	}
+
+	var stateMu sync.Mutex
+	saveState := func() {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+		if data, err := json.Marshal(state); err == nil {
+			_ = os.WriteFile(stateFile, data, 0644)
+		}
+	}
+
+	totStr := formatBytes(totalBytes)
+	lastReportTime := time.Now()
+	lastReportBytes := atomic.LoadInt64(&totalDownloaded)
+
+	reportProgress := func(force bool) {
+		now := time.Now()
+		if !force && now.Sub(lastReportTime) < 250*time.Millisecond {
+			return
+		}
+
+		currentBytes := atomic.LoadInt64(&totalDownloaded)
+		pct := (float64(currentBytes) / float64(totalBytes)) * 100.0
+		if pct > 100 {
+			pct = 100
+		}
+
+		duration := now.Sub(lastReportTime).Seconds()
+		if duration <= 0 {
+			duration = 0.25
+		}
+		bytesDiff := currentBytes - lastReportBytes
+		speedBytesPerSec := float64(bytesDiff) / duration
+
+		speedStr := formatSpeed(speedBytesPerSec)
+		dlStr := formatBytes(currentBytes)
+
+		m.mu.Lock()
+		for i, item := range m.downloads {
+			if item.ID == id {
+				if m.downloads[i].Status == "downloading" {
+					m.downloads[i].Progress = pct
+					m.downloads[i].Speed = speedStr
+					m.downloads[i].DownloadedSize = dlStr
+					m.downloads[i].TotalSize = totStr
+					m.downloads[i].StatusMsg = fmt.Sprintf("Turbo (%d connections)...", numWorkers)
+				}
+				break
+			}
+		}
+		m.mu.Unlock()
+
+		if m.wailsApp != nil {
+			m.wailsApp.Event.Emit("download_progress", map[string]interface{}{
+				"id":         id,
+				"percentage": fmt.Sprintf("%.1f", pct),
+				"downloaded": dlStr,
+				"total":      totStr,
+				"speed":      speedStr,
+				"statusMsg":  fmt.Sprintf("Turbo (%d connections)...", numWorkers),
+			})
+		}
+
+		lastReportTime = now
+		lastReportBytes = currentBytes
+	}
+
+	var wg sync.WaitGroup
+	var firstErr error
+	var errOnce sync.Once
+
+	for w := 0; w < numWorkers; w++ {
+		workerIndex := w
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			part := state.Parts[workerIndex]
+			curStart := part.StartOffset + part.Downloaded
+			if curStart > part.EndOffset {
+				return
+			}
+
+			req, err := http.NewRequestWithContext(ctx, "GET", downloadUrl, nil)
+			if err != nil {
+				errOnce.Do(func() { firstErr = err })
+				return
+			}
+			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", curStart, part.EndOffset))
+			if parsedUrl, err := url.Parse(downloadUrl); err == nil {
+				origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+				req.Header.Set("Referer", origin+"/")
+				req.Header.Set("Origin", origin)
+			}
+
+			resp, err := defaultClient.Do(req)
+			if err != nil {
+				if ctx.Err() == nil {
+					errOnce.Do(func() { firstErr = err })
+				}
+				return
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+				errOnce.Do(func() { firstErr = fmt.Errorf("worker %d bad status: %s", workerIndex, resp.Status) })
+				return
+			}
+
+			buf := make([]byte, 256*1024)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				n, readErr := resp.Body.Read(buf)
+				if n > 0 {
+					writePos := curStart
+					if _, writeErr := file.WriteAt(buf[:n], writePos); writeErr != nil {
+						errOnce.Do(func() { firstErr = writeErr })
+						return
+					}
+					curStart += int64(n)
+					atomic.AddInt64(&totalDownloaded, int64(n))
+
+					stateMu.Lock()
+					state.Parts[workerIndex].Downloaded += int64(n)
+					stateMu.Unlock()
+
+					reportProgress(false)
+				}
+
+				if readErr != nil {
+					if readErr == io.EOF {
+						break
+					}
+					if ctx.Err() == nil {
+						errOnce.Do(func() { firstErr = readErr })
+					}
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+	saveState()
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if firstErr != nil {
+		return firstErr
+	}
+
+	_ = file.Close()
+	_ = os.Remove(stateFile)
+	if err := os.Rename(partFile, dest); err != nil {
+		return fmt.Errorf("failed to finalize file: %w", err)
+	}
+
+	return nil
+}
+
+func (m *Manager) downloadSingleStream(ctx context.Context, id, downloadUrl, dest, partFile string, totalBytes int64) error {
 	var existingBytes int64 = 0
 	if fi, err := os.Stat(partFile); err == nil {
 		existingBytes = fi.Size()
@@ -338,10 +679,8 @@ func (m *Manager) startDownloadProcess(id, downloadUrl, title string) {
 
 	req, err := http.NewRequestWithContext(ctx, "GET", downloadUrl, nil)
 	if err != nil {
-		m.finalizeDownload(id, fmt.Errorf("request creation failed: %w", err))
-		return
+		return fmt.Errorf("request creation failed: %w", err)
 	}
-
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
 	if parsedUrl, err := url.Parse(downloadUrl); err == nil {
 		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
@@ -355,23 +694,17 @@ func (m *Manager) startDownloadProcess(id, downloadUrl, title string) {
 
 	resp, err := defaultClient.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		m.finalizeDownload(id, fmt.Errorf("network error: %w", err))
-		return
+		return err
 	}
 	defer resp.Body.Close()
 
 	var file *os.File
-	var totalBytes int64 = -1
 	var currentDownloaded int64 = 0
 
 	if resp.StatusCode == http.StatusPartialContent {
 		file, err = os.OpenFile(partFile, os.O_WRONLY|os.O_APPEND, 0644)
 		if err != nil {
-			m.finalizeDownload(id, fmt.Errorf("failed to open partial file: %w", err))
-			return
+			return fmt.Errorf("failed to open partial file: %w", err)
 		}
 		currentDownloaded = existingBytes
 		if resp.ContentLength > 0 {
@@ -380,33 +713,30 @@ func (m *Manager) startDownloadProcess(id, downloadUrl, title string) {
 	} else if resp.StatusCode == http.StatusOK {
 		file, err = os.OpenFile(partFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
-			m.finalizeDownload(id, fmt.Errorf("failed to create file: %w", err))
-			return
+			return fmt.Errorf("failed to create file: %w", err)
 		}
 		currentDownloaded = 0
 		totalBytes = resp.ContentLength
 	} else {
-		m.finalizeDownload(id, fmt.Errorf("HTTP error: %s", resp.Status))
-		return
+		return fmt.Errorf("HTTP error: %s", resp.Status)
 	}
 	defer file.Close()
 
-	buf := make([]byte, 128*1024)
+	buf := make([]byte, 256*1024)
 	lastReportTime := time.Now()
 	lastReportBytes := currentDownloaded
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return ctx.Err()
 		default:
 		}
 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
-				m.finalizeDownload(id, fmt.Errorf("write error: %w", writeErr))
-				return
+				return fmt.Errorf("write error: %w", writeErr)
 			}
 			currentDownloaded += int64(n)
 		}
@@ -466,23 +796,16 @@ func (m *Manager) startDownloadProcess(id, downloadUrl, title string) {
 			if readErr == io.EOF {
 				break
 			}
-			m.finalizeDownload(id, readErr)
-			return
+			return readErr
 		}
 	}
 
-	file.Close()
-
-	if ctx.Err() != nil {
-		return
-	}
-
+	_ = file.Close()
 	if err := os.Rename(partFile, dest); err != nil {
-		m.finalizeDownload(id, fmt.Errorf("failed to finalize file: %w", err))
-		return
+		return fmt.Errorf("failed to finalize file: %w", err)
 	}
 
-	m.finalizeDownload(id, nil)
+	return nil
 }
 
 func (m *Manager) finalizeDownload(id string, err error) {
@@ -497,6 +820,7 @@ func (m *Manager) finalizeDownload(id string, err error) {
 			}
 
 			if m.downloads[i].Status == "paused" || m.downloads[i].Status == "cancelled" {
+				m.processQueueLocked()
 				return
 			}
 
@@ -521,6 +845,7 @@ func (m *Manager) finalizeDownload(id string, err error) {
 			break
 		}
 	}
+	m.processQueueLocked()
 }
 
 func (m *Manager) PauseDownload(id string) {
@@ -546,19 +871,17 @@ func (m *Manager) PauseDownload(id string) {
 			break
 		}
 	}
+	m.processQueueLocked()
 	m.mu.Unlock()
 }
 
 func (m *Manager) ResumeDownload(id string) {
 	m.mu.Lock()
-	var urlStr, title string
 	for i, item := range m.downloads {
-		if item.ID == id && (item.Status == "paused" || item.Status == "error" || item.Status == "pending") {
+		if item.ID == id && (item.Status == "paused" || item.Status == "error" || item.Status == "pending" || item.Status == "queued") {
 			m.downloads[i].Status = "pending"
-			m.downloads[i].StatusMsg = "Resuming..."
+			m.downloads[i].StatusMsg = "Kuyruğa alındı..."
 			m.downloads[i].ErrorDetails = ""
-			urlStr = item.URL
-			title = item.Title
 			m.saveItemLocked(m.downloads[i])
 			if m.wailsApp != nil {
 				m.wailsApp.Event.Emit("download_updated", m.downloads[i])
@@ -566,11 +889,8 @@ func (m *Manager) ResumeDownload(id string) {
 			break
 		}
 	}
+	m.processQueueLocked()
 	m.mu.Unlock()
-
-	if urlStr != "" {
-		go m.startDownloadProcess(id, urlStr, title)
-	}
 }
 
 func (m *Manager) RemoveDownload(id string, deleteFile bool) {
@@ -599,6 +919,7 @@ func (m *Manager) RemoveDownload(id string, deleteFile bool) {
 				_ = m.db.MarkDeleted(id)
 			}
 		}
+		m.processQueueLocked()
 	}
 	m.mu.Unlock()
 
