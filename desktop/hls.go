@@ -1,0 +1,595 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type StreamVariant struct {
+	URL        string
+	Bandwidth  int
+	Resolution string
+	Width      int
+	Height     int
+	AudioGroup string
+}
+
+type AudioTrack struct {
+	Name     string
+	Language string
+	URI      string
+	GroupID  string
+	Default  bool
+}
+
+type HLSPlaylist struct {
+	IsMaster    bool
+	Variants    []StreamVariant
+	AudioTracks []AudioTrack
+	Segments    []string
+	InitSegment string
+	BaseURL     *url.URL
+}
+
+func isHLSStream(u, probeContent string) bool {
+	lowerU := strings.ToLower(u)
+	if strings.Contains(lowerU, ".m3u8") ||
+		strings.HasSuffix(lowerU, "master.txt") ||
+		strings.HasSuffix(lowerU, "playlist.txt") ||
+		strings.Contains(lowerU, "/hls/") {
+		return true
+	}
+	trimmed := strings.TrimSpace(probeContent)
+	return strings.HasPrefix(trimmed, "#EXTM3U") || strings.HasPrefix(trimmed, "#EXT-X-")
+}
+
+func parseHLS(content string, baseURL *url.URL) (*HLSPlaylist, error) {
+	lines := strings.Split(content, "\n")
+	pl := &HLSPlaylist{
+		BaseURL:     baseURL,
+		Variants:    []StreamVariant{},
+		AudioTracks: []AudioTrack{},
+		Segments:    []string{},
+	}
+
+	var currentVariant *StreamVariant
+	var hasStreamInf bool
+
+	reBandwidth := regexp.MustCompile(`BANDWIDTH=(\d+)`)
+	reResolution := regexp.MustCompile(`RESOLUTION=(\d+)x(\d+)`)
+	reAudioGroup := regexp.MustCompile(`AUDIO="([^"]+)"`)
+
+	reAudioName := regexp.MustCompile(`NAME="([^"]+)"`)
+	reAudioURI := regexp.MustCompile(`URI="([^"]+)"`)
+	reAudioGroupID := regexp.MustCompile(`GROUP-ID="([^"]+)"`)
+	reAudioDefault := regexp.MustCompile(`DEFAULT=(YES|NO)`)
+	reAudioLang := regexp.MustCompile(`LANGUAGE="([^"]+)"`)
+
+	reInitMap := regexp.MustCompile(`URI="([^"]+)"`)
+
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if line == "" {
+			continue
+		}
+
+		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
+			hasStreamInf = true
+			v := StreamVariant{}
+			if m := reBandwidth.FindStringSubmatch(line); len(m) > 1 {
+				v.Bandwidth, _ = strconv.Atoi(m[1])
+			}
+			if m := reResolution.FindStringSubmatch(line); len(m) > 2 {
+				v.Width, _ = strconv.Atoi(m[1])
+				v.Height, _ = strconv.Atoi(m[2])
+				v.Resolution = fmt.Sprintf("%dx%d", v.Width, v.Height)
+			}
+			if m := reAudioGroup.FindStringSubmatch(line); len(m) > 1 {
+				v.AudioGroup = m[1]
+			}
+			currentVariant = &v
+		} else if strings.HasPrefix(line, "#EXT-X-MEDIA:TYPE=AUDIO") {
+			hasStreamInf = true
+			a := AudioTrack{}
+			if m := reAudioName.FindStringSubmatch(line); len(m) > 1 {
+				a.Name = m[1]
+			}
+			if m := reAudioURI.FindStringSubmatch(line); len(m) > 1 {
+				a.URI = resolveURL(baseURL, m[1])
+			}
+			if m := reAudioGroupID.FindStringSubmatch(line); len(m) > 1 {
+				a.GroupID = m[1]
+			}
+			if m := reAudioDefault.FindStringSubmatch(line); len(m) > 1 {
+				a.Default = (m[1] == "YES")
+			}
+			if m := reAudioLang.FindStringSubmatch(line); len(m) > 1 {
+				a.Language = m[1]
+			}
+			if a.URI != "" {
+				pl.AudioTracks = append(pl.AudioTracks, a)
+			}
+		} else if strings.HasPrefix(line, "#EXT-X-MAP:") {
+			if m := reInitMap.FindStringSubmatch(line); len(m) > 1 {
+				pl.InitSegment = resolveURL(baseURL, m[1])
+			}
+		} else if !strings.HasPrefix(line, "#") {
+			if currentVariant != nil {
+				currentVariant.URL = resolveURL(baseURL, line)
+				pl.Variants = append(pl.Variants, *currentVariant)
+				currentVariant = nil
+			} else {
+				pl.Segments = append(pl.Segments, resolveURL(baseURL, line))
+			}
+		}
+	}
+
+	pl.IsMaster = hasStreamInf && len(pl.Variants) > 0
+	return pl, nil
+}
+
+func resolveURL(base *url.URL, ref string) string {
+	ref = strings.TrimSpace(ref)
+	refURL, err := url.Parse(ref)
+	if err != nil {
+		return ref
+	}
+	if base == nil {
+		return ref
+	}
+	return base.ResolveReference(refURL).String()
+}
+
+func fetchHLSContent(ctx context.Context, targetURL string) (string, *url.URL, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+	if parsedUrl, err := url.Parse(targetURL); err == nil {
+		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+		req.Header.Set("Referer", origin+"/")
+		req.Header.Set("Origin", origin)
+	}
+
+	resp, err := defaultClient.Do(req)
+	if err != nil {
+		return "", nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, fmt.Errorf("HLS request failed with status: %s", resp.Status)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return string(body), resp.Request.URL, nil
+}
+
+func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err error) {
+	log.Printf("[HLS %s] Starting HLS download for %s -> %s", id, rawURL, dest)
+	content, actualURL, err := fetchHLSContent(ctx, rawURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch playlist: %w", err)
+	}
+
+	pl, err := parseHLS(content, actualURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse playlist: %w", err)
+	}
+
+	var videoMediaURL string
+	var selectedAudioURL string
+
+	if pl.IsMaster {
+		// Pick highest resolution/bandwidth variant
+		sort.Slice(pl.Variants, func(i, j int) bool {
+			if pl.Variants[i].Height != pl.Variants[j].Height {
+				return pl.Variants[i].Height > pl.Variants[j].Height
+			}
+			return pl.Variants[i].Bandwidth > pl.Variants[j].Bandwidth
+		})
+
+		bestVariant := pl.Variants[0]
+		videoMediaURL = bestVariant.URL
+		log.Printf("[HLS %s] Selected video variant: %s (%dx%d, %d bps)", id, bestVariant.URL, bestVariant.Width, bestVariant.Height, bestVariant.Bandwidth)
+
+		// Pick matching audio track if separate audio group
+		if bestVariant.AudioGroup != "" {
+			for _, aud := range pl.AudioTracks {
+				if aud.GroupID == bestVariant.AudioGroup {
+					if aud.Default || selectedAudioURL == "" {
+						selectedAudioURL = aud.URI
+					}
+				}
+			}
+		}
+		if selectedAudioURL == "" && len(pl.AudioTracks) > 0 {
+			selectedAudioURL = pl.AudioTracks[0].URI
+		}
+		if selectedAudioURL != "" {
+			log.Printf("[HLS %s] Selected audio track: %s", id, selectedAudioURL)
+		}
+	} else {
+		videoMediaURL = actualURL.String()
+	}
+
+	// Fetch video segment playlist
+	vContent, vURL, err := fetchHLSContent(ctx, videoMediaURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch video sublist: %w", err)
+	}
+	videoPL, err := parseHLS(vContent, vURL)
+	if err != nil || len(videoPL.Segments) == 0 {
+		return fmt.Errorf("no video segments found in playlist")
+	}
+
+	// Fetch audio segment playlist if exists
+	var audioPL *HLSPlaylist
+	if selectedAudioURL != "" && selectedAudioURL != videoMediaURL {
+		aContent, aURL, err := fetchHLSContent(ctx, selectedAudioURL)
+		if err == nil {
+			aParsed, err := parseHLS(aContent, aURL)
+			if err == nil && len(aParsed.Segments) > 0 {
+				audioPL = aParsed
+			}
+		}
+	}
+
+	totalVideoSegments := len(videoPL.Segments)
+	totalAudioSegments := 0
+	if audioPL != nil {
+		totalAudioSegments = len(audioPL.Segments)
+	}
+	totalSegments := totalVideoSegments + totalAudioSegments
+	log.Printf("[HLS %s] Found %d video segments and %d audio segments (Total: %d)", id, totalVideoSegments, totalAudioSegments, totalSegments)
+
+	tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("xdm_hls_%s", id))
+	os.MkdirAll(filepath.Join(tempDir, "video"), 0755)
+	if audioPL != nil {
+		os.MkdirAll(filepath.Join(tempDir, "audio"), 0755)
+	}
+	defer func() {
+		if ctx.Err() == nil && err == nil {
+			log.Printf("[HLS %s] Cleaning up temp directory: %s", id, tempDir)
+			os.RemoveAll(tempDir)
+		} else if err != nil {
+			log.Printf("[HLS %s] Error occurred (%v). Preserving temp directory for resume: %s", id, err, tempDir)
+		}
+	}()
+
+	var downloadedBytes int64
+	var completedSegments int64
+	lastReportTime := time.Now()
+	var lastReportBytes int64
+
+	reportProgress := func(force bool) {
+		now := time.Now()
+		if !force && now.Sub(lastReportTime) < 250*time.Millisecond {
+			return
+		}
+
+		currentDone := atomic.LoadInt64(&completedSegments)
+		currentBytes := atomic.LoadInt64(&downloadedBytes)
+
+		pct := (float64(currentDone) / float64(totalSegments)) * 100.0
+		if pct > 100 {
+			pct = 100
+		}
+
+		duration := now.Sub(lastReportTime).Seconds()
+		if duration <= 0 {
+			duration = 0.25
+		}
+		bytesDiff := currentBytes - lastReportBytes
+		speedBytesPerSec := float64(bytesDiff) / duration
+
+		speedStr := formatSpeed(speedBytesPerSec)
+		dlStr := formatBytes(currentBytes)
+
+		// Estimated total size
+		var totStr string
+		if currentDone > 0 {
+			avgChunkSize := float64(currentBytes) / float64(currentDone)
+			estTotal := int64(avgChunkSize * float64(totalSegments))
+			totStr = fmt.Sprintf("~%s", formatBytes(estTotal))
+		}
+
+		statusMsg := fmt.Sprintf("Downloading chunks (%d/%d)...", currentDone, totalSegments)
+
+		m.mu.Lock()
+		for i, item := range m.downloads {
+			if item.ID == id {
+				if m.downloads[i].Status == "downloading" {
+					m.downloads[i].Progress = pct
+					m.downloads[i].Speed = speedStr
+					m.downloads[i].DownloadedSize = dlStr
+					m.downloads[i].TotalSize = totStr
+					m.downloads[i].StatusMsg = statusMsg
+				}
+				break
+			}
+		}
+		m.mu.Unlock()
+
+		if m.wailsApp != nil {
+			m.wailsApp.Event.Emit("download_progress", map[string]interface{}{
+				"id":         id,
+				"percentage": fmt.Sprintf("%.1f", pct),
+				"downloaded": dlStr,
+				"total":      totStr,
+				"speed":      speedStr,
+				"statusMsg":  statusMsg,
+			})
+		}
+
+		lastReportTime = now
+		lastReportBytes = currentBytes
+	}
+
+	downloadSegmentList := func(segments []string, subFolder string) error {
+		type job struct {
+			index int
+			url   string
+		}
+
+		jobs := make(chan job, len(segments))
+		for idx, sUrl := range segments {
+			jobs <- job{index: idx, url: sUrl}
+		}
+		close(jobs)
+
+		concurrency := 4
+		if len(segments) < concurrency {
+			concurrency = len(segments)
+		}
+
+		var wg sync.WaitGroup
+		var firstErr error
+		var errOnce sync.Once
+
+		for w := 0; w < concurrency; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for j := range jobs {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					segPath := filepath.Join(tempDir, subFolder, fmt.Sprintf("seg_%06d.ts", j.index))
+					if fi, err := os.Stat(segPath); err == nil && fi.Size() > 0 {
+						atomic.AddInt64(&downloadedBytes, fi.Size())
+						atomic.AddInt64(&completedSegments, 1)
+						reportProgress(false)
+						continue
+					}
+
+					var segBytes int64
+					var dlErr error
+					for attempt := 0; attempt < 10; attempt++ {
+						select {
+						case <-ctx.Done():
+							return
+						default:
+						}
+
+						segBytes, dlErr = downloadSegmentToFile(ctx, j.url, segPath)
+						if dlErr == nil {
+							break
+						}
+
+						if strings.Contains(dlErr.Error(), "rate limited") {
+							time.Sleep(time.Duration(1200+attempt*600) * time.Millisecond)
+						} else {
+							time.Sleep(time.Duration(300*(attempt+1)) * time.Millisecond)
+						}
+					}
+
+					if dlErr != nil {
+						errOnce.Do(func() {
+							firstErr = fmt.Errorf("failed to download %s segment %d: %w", subFolder, j.index, dlErr)
+						})
+						return
+					}
+
+					atomic.AddInt64(&downloadedBytes, segBytes)
+					atomic.AddInt64(&completedSegments, 1)
+					reportProgress(false)
+				}
+			}()
+		}
+
+		wg.Wait()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		return firstErr
+	}
+
+	// Download Video Segments
+	if err := downloadSegmentList(videoPL.Segments, "video"); err != nil {
+		return err
+	}
+
+	// Download Audio Segments if any
+	if audioPL != nil {
+		if err := downloadSegmentList(audioPL.Segments, "audio"); err != nil {
+			return err
+		}
+	}
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	// Update status to Merging
+	m.mu.Lock()
+	for i, item := range m.downloads {
+		if item.ID == id {
+			m.downloads[i].StatusMsg = "Merging video & audio..."
+			m.downloads[i].Speed = ""
+			if m.wailsApp != nil {
+				m.wailsApp.Event.Emit("download_updated", m.downloads[i])
+			}
+			break
+		}
+	}
+	m.mu.Unlock()
+
+	// Concatenate video segments
+	rawVideoTS := filepath.Join(tempDir, "video_merged.ts")
+	if err := concatSegments(tempDir, "video", len(videoPL.Segments), rawVideoTS); err != nil {
+		return fmt.Errorf("failed to merge video segments: %w", err)
+	}
+
+	// Concatenate audio segments if present
+	var rawAudioTS string
+	if audioPL != nil {
+		rawAudioTS = filepath.Join(tempDir, "audio_merged.ts")
+		if err := concatSegments(tempDir, "audio", len(audioPL.Segments), rawAudioTS); err != nil {
+			return fmt.Errorf("failed to merge audio segments: %w", err)
+		}
+	}
+
+	// Check if ffmpeg is available
+	ffmpegPath, err := exec.LookPath("ffmpeg")
+	if err == nil && ffmpegPath != "" {
+		var cmd *exec.Cmd
+		if rawAudioTS != "" {
+			cmd = exec.Command(ffmpegPath, "-y",
+				"-i", rawVideoTS,
+				"-i", rawAudioTS,
+				"-map", "0:v:0",
+				"-map", "1:a:0",
+				"-c", "copy",
+				"-bsf:a", "aac_adtstoasc",
+				"-movflags", "+faststart",
+				dest)
+		} else {
+			cmd = exec.Command(ffmpegPath, "-y",
+				"-i", rawVideoTS,
+				"-c", "copy",
+				"-movflags", "+faststart",
+				dest)
+		}
+		log.Printf("[HLS %s] Running ffmpeg command: %v", id, cmd.Args)
+		out, runErr := cmd.CombinedOutput()
+		if runErr != nil {
+			log.Printf("[HLS %s] ffmpeg failed: %s (%v), attempting fallback...", id, string(out), runErr)
+			// If ffmpeg failed with bsf or flags, try simple copy
+			var cmdFallback *exec.Cmd
+			if rawAudioTS != "" {
+				cmdFallback = exec.Command(ffmpegPath, "-y", "-i", rawVideoTS, "-i", rawAudioTS, "-c", "copy", dest)
+			} else {
+				cmdFallback = exec.Command(ffmpegPath, "-y", "-i", rawVideoTS, "-c", "copy", dest)
+			}
+			if outFb, errFb := cmdFallback.CombinedOutput(); errFb != nil {
+				log.Printf("[HLS %s] ffmpeg fallback failed: %s (%v), attempting direct rename...", id, string(outFb), errFb)
+				// Fallback: copy video TS directly to destination
+				if errMove := os.Rename(rawVideoTS, dest); errMove != nil {
+					return fmt.Errorf("ffmpeg error: %s (fallback: %s, %w)", string(out), string(outFb), errMove)
+				}
+			}
+		}
+		log.Printf("[HLS %s] Successfully merged video into %s", id, dest)
+	} else {
+		// No ffmpeg installed: simply move merged video TS to destination
+		if err := os.Rename(rawVideoTS, dest); err != nil {
+			return fmt.Errorf("failed to finalize file: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func downloadSegmentToFile(ctx context.Context, segURL, outPath string) (int64, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, "GET", segURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+	if parsedUrl, err := url.Parse(segURL); err == nil {
+		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+		req.Header.Set("Referer", origin+"/")
+		req.Header.Set("Origin", origin)
+	}
+
+	resp, err := defaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+		return 0, fmt.Errorf("rate limited: %s", resp.Status)
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return 0, fmt.Errorf("bad status %s", resp.Status)
+	}
+
+	partPath := outPath + ".tmp"
+	f, err := os.Create(partPath)
+	if err != nil {
+		return 0, err
+	}
+
+	n, err := io.Copy(f, resp.Body)
+	f.Close()
+	if err != nil {
+		os.Remove(partPath)
+		return 0, err
+	}
+
+	if err := os.Rename(partPath, outPath); err != nil {
+		return 0, err
+	}
+
+	return n, nil
+}
+
+func concatSegments(tempDir, subFolder string, count int, outputPath string) error {
+	out, err := os.Create(outputPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	buf := make([]byte, 256*1024)
+	for i := 0; i < count; i++ {
+		segPath := filepath.Join(tempDir, subFolder, fmt.Sprintf("seg_%06d.ts", i))
+		in, err := os.Open(segPath)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.CopyBuffer(out, in, buf)
+		in.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+	}
+	return nil
+}
