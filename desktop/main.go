@@ -31,10 +31,13 @@ func main() {
 	myApp.StartServer()
 
 	window := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Video Download Manager",
-		Width:  1000,
-		Height: 650,
-		URL:    "/",
+		Title:      "Video Download Manager",
+		Width:      1200,
+		Height:     800,
+		MinWidth:   800,
+		MinHeight:  550,
+		StartState: application.WindowStateMaximised,
+		URL:        "/",
 	})
 
 	myApp.SetWindow(window)

@@ -155,33 +155,58 @@ func resolveURL(base *url.URL, ref string) string {
 }
 
 func fetchHLSContent(ctx context.Context, targetURL string) (string, *url.URL, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
-	if err != nil {
-		return "", nil, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
-	if parsedUrl, err := url.Parse(targetURL); err == nil {
-		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
-		req.Header.Set("Referer", origin+"/")
-		req.Header.Set("Origin", origin)
-	}
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		select {
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
+		default:
+		}
 
-	resp, err := defaultClient.Do(req)
-	if err != nil {
-		return "", nil, err
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+		if err != nil {
+			return "", nil, err
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+		req.Header.Set("Accept", "*/*")
+		if parsedUrl, err := url.Parse(targetURL); err == nil {
+			origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
+			req.Header.Set("Referer", origin+"/")
+			req.Header.Set("Origin", origin)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return "", nil, fmt.Errorf("HLS request failed with status: %s", resp.Status)
-	}
+		resp, err := defaultClient.Do(req)
+		if err != nil {
+			lastErr = err
+			time.Sleep(time.Duration(1000*(attempt+1)) * time.Millisecond)
+			continue
+		}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", nil, err
-	}
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("HLS request rate limited (status: %s)", resp.Status)
+			backoff := time.Duration(1500+attempt*1500) * time.Millisecond
+			log.Printf("[HLS fetch] Rate limited on %s, waiting %v before retry %d...", targetURL, backoff, attempt+1)
+			time.Sleep(backoff)
+			continue
+		}
 
-	return string(body), resp.Request.URL, nil
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return "", nil, fmt.Errorf("HLS request failed with status: %s", resp.Status)
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = err
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+
+		return string(body), resp.Request.URL, nil
+	}
+	return "", nil, fmt.Errorf("failed after retries: %w", lastErr)
 }
 
 func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err error) {
@@ -262,17 +287,19 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 	totalSegments := totalVideoSegments + totalAudioSegments
 	log.Printf("[HLS %s] Found %d video segments and %d audio segments (Total: %d)", id, totalVideoSegments, totalAudioSegments, totalSegments)
 
-	tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("xdm_hls_%s", id))
-	os.MkdirAll(filepath.Join(tempDir, "video"), 0755)
+	// Use temporary directory inside destination folder on the storage drive (NOT RAM /tmp)
+	destDir := filepath.Dir(dest)
+	tempDir := filepath.Join(destDir, fmt.Sprintf(".vdm_tmp_%s", id))
+	_ = os.MkdirAll(filepath.Join(tempDir, "video"), 0755)
 	if audioPL != nil {
-		os.MkdirAll(filepath.Join(tempDir, "audio"), 0755)
+		_ = os.MkdirAll(filepath.Join(tempDir, "audio"), 0755)
 	}
 	defer func() {
 		if ctx.Err() == nil && err == nil {
 			log.Printf("[HLS %s] Cleaning up temp directory: %s", id, tempDir)
-			os.RemoveAll(tempDir)
-		} else if err != nil {
-			log.Printf("[HLS %s] Error occurred (%v). Preserving temp directory for resume: %s", id, err, tempDir)
+			_ = os.RemoveAll(tempDir)
+		} else {
+			log.Printf("[HLS %s] Preserving downloaded chunks in %s for resume", id, tempDir)
 		}
 	}()
 
@@ -387,7 +414,7 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 
 					var segBytes int64
 					var dlErr error
-					for attempt := 0; attempt < 10; attempt++ {
+					for attempt := 0; attempt < 20; attempt++ {
 						select {
 						case <-ctx.Done():
 							return
@@ -399,10 +426,10 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 							break
 						}
 
-						if strings.Contains(dlErr.Error(), "rate limited") {
-							time.Sleep(time.Duration(1200+attempt*600) * time.Millisecond)
+						if strings.Contains(dlErr.Error(), "rate limited") || strings.Contains(dlErr.Error(), "429") {
+							time.Sleep(time.Duration(2000+attempt*1000) * time.Millisecond)
 						} else {
-							time.Sleep(time.Duration(300*(attempt+1)) * time.Millisecond)
+							time.Sleep(time.Duration(500*(attempt+1)) * time.Millisecond)
 						}
 					}
 
@@ -457,18 +484,34 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 	}
 	m.mu.Unlock()
 
-	// Concatenate video segments
-	rawVideoTS := filepath.Join(tempDir, "video_merged.ts")
-	if err := concatSegments(tempDir, "video", len(videoPL.Segments), rawVideoTS); err != nil {
-		return fmt.Errorf("failed to merge video segments: %w", err)
+	// Create concat text files for zero-copy stream concatenation
+	writeConcatFile := func(subFolder string, count int, listPath string) error {
+		f, err := os.Create(listPath)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		for i := 0; i < count; i++ {
+			segPath := filepath.Join(tempDir, subFolder, fmt.Sprintf("seg_%06d.ts", i))
+			absPath, _ := filepath.Abs(segPath)
+			escaped := strings.ReplaceAll(absPath, "'", "'\\''")
+			if _, err := f.WriteString(fmt.Sprintf("file '%s'\n", escaped)); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
-	// Concatenate audio segments if present
-	var rawAudioTS string
+	videoConcatFile := filepath.Join(tempDir, "video_concat.txt")
+	if err := writeConcatFile("video", len(videoPL.Segments), videoConcatFile); err != nil {
+		return fmt.Errorf("failed to create video concat list: %w", err)
+	}
+
+	var audioConcatFile string
 	if audioPL != nil {
-		rawAudioTS = filepath.Join(tempDir, "audio_merged.ts")
-		if err := concatSegments(tempDir, "audio", len(audioPL.Segments), rawAudioTS); err != nil {
-			return fmt.Errorf("failed to merge audio segments: %w", err)
+		audioConcatFile = filepath.Join(tempDir, "audio_concat.txt")
+		if err := writeConcatFile("audio", len(audioPL.Segments), audioConcatFile); err != nil {
+			return fmt.Errorf("failed to create audio concat list: %w", err)
 		}
 	}
 
@@ -476,10 +519,10 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err == nil && ffmpegPath != "" {
 		var cmd *exec.Cmd
-		if rawAudioTS != "" {
+		if audioConcatFile != "" {
 			cmd = exec.Command(ffmpegPath, "-y",
-				"-i", rawVideoTS,
-				"-i", rawAudioTS,
+				"-f", "concat", "-safe", "0", "-i", videoConcatFile,
+				"-f", "concat", "-safe", "0", "-i", audioConcatFile,
 				"-map", "0:v:0",
 				"-map", "1:a:0",
 				"-c", "copy",
@@ -488,35 +531,24 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 				dest)
 		} else {
 			cmd = exec.Command(ffmpegPath, "-y",
-				"-i", rawVideoTS,
+				"-f", "concat", "-safe", "0", "-i", videoConcatFile,
 				"-c", "copy",
 				"-movflags", "+faststart",
 				dest)
 		}
-		log.Printf("[HLS %s] Running ffmpeg command: %v", id, cmd.Args)
+		log.Printf("[HLS %s] Running ffmpeg concat mux: %v", id, cmd.Args)
 		out, runErr := cmd.CombinedOutput()
 		if runErr != nil {
-			log.Printf("[HLS %s] ffmpeg failed: %s (%v), attempting fallback...", id, string(out), runErr)
-			// If ffmpeg failed with bsf or flags, try simple copy
-			var cmdFallback *exec.Cmd
-			if rawAudioTS != "" {
-				cmdFallback = exec.Command(ffmpegPath, "-y", "-i", rawVideoTS, "-i", rawAudioTS, "-c", "copy", dest)
-			} else {
-				cmdFallback = exec.Command(ffmpegPath, "-y", "-i", rawVideoTS, "-c", "copy", dest)
-			}
-			if outFb, errFb := cmdFallback.CombinedOutput(); errFb != nil {
-				log.Printf("[HLS %s] ffmpeg fallback failed: %s (%v), attempting direct rename...", id, string(outFb), errFb)
-				// Fallback: copy video TS directly to destination
-				if errMove := os.Rename(rawVideoTS, dest); errMove != nil {
-					return fmt.Errorf("ffmpeg error: %s (fallback: %s, %w)", string(out), string(outFb), errMove)
-				}
+			log.Printf("[HLS %s] ffmpeg concat mux failed: %s (%v), attempting single-pass direct concat fallback...", id, string(out), runErr)
+			if errConcat := concatSegmentsDirect(tempDir, "video", len(videoPL.Segments), dest); errConcat != nil {
+				return fmt.Errorf("ffmpeg error: %s (%w), direct concat error: %v", string(out), runErr, errConcat)
 			}
 		}
-		log.Printf("[HLS %s] Successfully merged video into %s", id, dest)
+		log.Printf("[HLS %s] Successfully finalized video into %s", id, dest)
 	} else {
-		// No ffmpeg installed: simply move merged video TS to destination
-		if err := os.Rename(rawVideoTS, dest); err != nil {
-			return fmt.Errorf("failed to finalize file: %w", err)
+		// No ffmpeg: direct single-pass concatenation into destination
+		if errConcat := concatSegmentsDirect(tempDir, "video", len(videoPL.Segments), dest); errConcat != nil {
+			return fmt.Errorf("failed to concatenate video segments: %w", errConcat)
 		}
 	}
 
@@ -524,7 +556,7 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 }
 
 func downloadSegmentToFile(ctx context.Context, segURL, outPath string) (int64, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	reqCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(reqCtx, "GET", segURL, nil)
@@ -532,6 +564,7 @@ func downloadSegmentToFile(ctx context.Context, segURL, outPath string) (int64, 
 		return 0, err
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "*/*")
 	if parsedUrl, err := url.Parse(segURL); err == nil {
 		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
 		req.Header.Set("Referer", origin+"/")
@@ -560,7 +593,7 @@ func downloadSegmentToFile(ctx context.Context, segURL, outPath string) (int64, 
 	n, err := io.Copy(f, resp.Body)
 	f.Close()
 	if err != nil {
-		os.Remove(partPath)
+		_ = os.Remove(partPath)
 		return 0, err
 	}
 
@@ -571,14 +604,14 @@ func downloadSegmentToFile(ctx context.Context, segURL, outPath string) (int64, 
 	return n, nil
 }
 
-func concatSegments(tempDir, subFolder string, count int, outputPath string) error {
+func concatSegmentsDirect(tempDir, subFolder string, count int, outputPath string) error {
 	out, err := os.Create(outputPath)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
 
-	buf := make([]byte, 256*1024)
+	buf := make([]byte, 512*1024)
 	for i := 0; i < count; i++ {
 		segPath := filepath.Join(tempDir, subFolder, fmt.Sprintf("seg_%06d.ts", i))
 		in, err := os.Open(segPath)

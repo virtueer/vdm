@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Events } from '@wailsio/runtime';
 import { Header } from '@/components/Header';
 import { DownloadCard } from '@/components/DownloadCard';
 import { EmptyState } from '@/components/EmptyState';
 import { DeleteModal } from '@/components/DeleteModal';
 import { AddDownloadModal } from '@/components/AddDownloadModal';
+import { MediaInfoModal } from '@/components/MediaInfoModal';
+import { ErrorModal } from '@/components/ErrorModal';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { api } from '@/lib/api';
 import type { DownloadItem, DownloadProgressPayload } from '@/types';
@@ -12,15 +14,37 @@ import type { DownloadItem, DownloadProgressPayload } from '@/types';
 export default function App() {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<DownloadItem | null>(null);
+  const [mediaInfoTarget, setMediaInfoTarget] = useState<DownloadItem | null>(null);
+  const [errorTarget, setErrorTarget] = useState<DownloadItem | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Load initial downloads on mount
-  useEffect(() => {
-    api.getDownloads().then((data) => {
+  const refreshDownloads = useCallback(async (isManualScan = false) => {
+    if (isManualScan) setIsRefreshing(true);
+    try {
+      const data = isManualScan ? await api.scanDownloads() : await api.getDownloads();
       if (Array.isArray(data)) {
         setDownloads(data);
       }
-    });
+    } catch (e) {
+      console.error('refresh error:', e);
+    } finally {
+      if (isManualScan) {
+        setTimeout(() => setIsRefreshing(false), 400);
+      }
+    }
+  }, []);
+
+  // Load initial downloads on mount with multiple retries for bridge readiness
+  useEffect(() => {
+    refreshDownloads();
+
+    const t1 = setTimeout(() => refreshDownloads(), 250);
+    const t2 = setTimeout(() => refreshDownloads(), 800);
+    const t3 = setTimeout(() => refreshDownloads(), 2000);
+
+    const onFocus = () => refreshDownloads();
+    window.addEventListener('focus', onFocus);
 
     // Listen to Wails runtime events
     const unsubNew = Events.On('new_download', (event) => {
@@ -39,6 +63,8 @@ export default function App() {
         setDownloads((prev) =>
           prev.map((d) => (d.id === item.id ? { ...d, ...item } : d))
         );
+        // If error modal is open for this item, keep it updated
+        setErrorTarget((prev) => (prev && prev.id === item.id ? { ...prev, ...item } : prev));
       }
     });
 
@@ -55,6 +81,7 @@ export default function App() {
                 speed: p.speed,
                 downloadedSize: p.downloaded,
                 totalSize: p.total || d.totalSize,
+                statusMsg: (p as any).statusMsg || d.statusMsg,
               };
             }
             return d;
@@ -67,16 +94,21 @@ export default function App() {
       const id = (event.data?.[0] || event.data) as string;
       if (id) {
         setDownloads((prev) => prev.filter((d) => d.id !== id));
+        setErrorTarget((prev) => (prev && prev.id === id ? null : prev));
       }
     });
 
     return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+      window.removeEventListener('focus', onFocus);
       if (typeof unsubNew === 'function') unsubNew();
       if (typeof unsubUpdated === 'function') unsubUpdated();
       if (typeof unsubProgress === 'function') unsubProgress();
       if (typeof unsubRemoved === 'function') unsubRemoved();
     };
-  }, []);
+  }, [refreshDownloads]);
 
   const handlePause = async (id: string) => {
     await api.pauseDownload(id);
@@ -109,16 +141,22 @@ export default function App() {
       <Header
         activeCount={activeCount}
         totalCount={downloads.length}
+        isRefreshing={isRefreshing}
+        onRefresh={() => refreshDownloads(true)}
         onOpenAddModal={() => setIsAddModalOpen(true)}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 min-h-0 overflow-hidden bg-background">
         {downloads.length === 0 ? (
-          <EmptyState onOpenAddModal={() => setIsAddModalOpen(true)} />
+          <EmptyState
+            isRefreshing={isRefreshing}
+            onRefresh={() => refreshDownloads(true)}
+            onOpenAddModal={() => setIsAddModalOpen(true)}
+          />
         ) : (
           <ScrollArea className="h-full">
-            <div className="flex flex-col gap-3 p-6 max-w-4xl mx-auto">
+            <div className="flex flex-col gap-3 p-6 max-w-5xl mx-auto w-full">
               {downloads.map((item) => (
                 <DownloadCard
                   key={item.id}
@@ -126,6 +164,8 @@ export default function App() {
                   onPause={handlePause}
                   onResume={handleResume}
                   onShowInFolder={handleShowInFolder}
+                  onShowMediaInfo={(target) => setMediaInfoTarget(target)}
+                  onShowError={(target) => setErrorTarget(target)}
                   onDeleteRequest={(target) => setDeleteTarget(target)}
                 />
               ))}
@@ -133,6 +173,23 @@ export default function App() {
           </ScrollArea>
         )}
       </main>
+
+      {/* Error Details Modal */}
+      <ErrorModal
+        item={errorTarget}
+        isOpen={!!errorTarget}
+        onClose={() => setErrorTarget(null)}
+        onRetry={handleResume}
+        onShowInFolder={handleShowInFolder}
+      />
+
+      {/* Media Info Modal */}
+      <MediaInfoModal
+        item={mediaInfoTarget}
+        isOpen={!!mediaInfoTarget}
+        onClose={() => setMediaInfoTarget(null)}
+        onShowInFolder={handleShowInFolder}
+      />
 
       {/* Delete Confirmation Modal */}
       <DeleteModal

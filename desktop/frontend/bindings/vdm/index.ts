@@ -5,3 +5,9 @@ import * as App from "./app.js";
 export {
     App
 };
+
+export type {
+    DownloadItem,
+    MediaInfo,
+    StreamInfo
+} from "./models.js";

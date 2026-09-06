@@ -1,17 +1,21 @@
 import React from 'react';
-import { Download, Plus, Radio } from 'lucide-react';
+import { Download, Plus, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 
 interface HeaderProps {
   activeCount: number;
   totalCount: number;
+  isRefreshing?: boolean;
+  onRefresh: () => void;
   onOpenAddModal: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   activeCount,
   totalCount,
+  isRefreshing = false,
+  onRefresh,
   onOpenAddModal,
 }) => {
   return (
@@ -47,6 +51,17 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRefresh}
+          disabled={isRefreshing}
+          className="gap-1.5 shadow-sm text-xs"
+          title="İndirilenler klasörünü tara ve geçmişi yenile"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span>Yenile</span>
+        </Button>
         <Button onClick={onOpenAddModal} size="sm" className="gap-1.5 shadow-sm">
           <Plus className="w-4 h-4" />
           <span>URL İndir</span>

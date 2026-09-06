@@ -8,43 +8,21 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
 import * as application$0 from "../github.com/wailsapp/wails/v3/pkg/application/models.js";
+
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
-import * as config$0 from "./internal/config/models.js";
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore: Unused imports
-import * as models$0 from "./internal/models/models.js";
+import * as $models from "./models.js";
 
-export function AddDownload(url: string, typ: string, size: string, pageUrl: string, title: string, formatId: string): $CancellablePromise<void> {
-    return $Call.ByID(421089748, url, typ, size, pageUrl, title, formatId);
+export function AddDownload(urlStr: string, title: string): $CancellablePromise<string> {
+    return $Call.ByID(421089748, urlStr, title);
 }
 
-export function CancelDownload(id: string): $CancellablePromise<void> {
-    return $Call.ByID(2532515671, id);
-}
-
-export function ClearTerminalLogs(): $CancellablePromise<void> {
-    return $Call.ByID(2297066145);
-}
-
-export function GetConfig(): $CancellablePromise<config$0.AppConfig> {
-    return $Call.ByID(1200034045);
-}
-
-export function GetDownloadLogs(downloadID: string): $CancellablePromise<string[] | null> {
-    return $Call.ByID(3546972680, downloadID);
-}
-
-export function GetDownloads(): $CancellablePromise<models$0.DownloadItem[] | null> {
+export function GetDownloads(): $CancellablePromise<$models.DownloadItem[] | null> {
     return $Call.ByID(3093261880);
 }
 
-export function GetTerminalLogs(): $CancellablePromise<string[] | null> {
-    return $Call.ByID(2244485744);
-}
-
-export function GetYouTubeFormats(u: string): $CancellablePromise<models$0.YouTubeFormat[] | null> {
-    return $Call.ByID(991983236, u);
+export function GetMediaInfo(target: string): $CancellablePromise<$models.MediaInfo | null> {
+    return $Call.ByID(605887497, target);
 }
 
 export function PauseDownload(id: string): $CancellablePromise<void> {
@@ -59,20 +37,12 @@ export function ResumeDownload(id: string): $CancellablePromise<void> {
     return $Call.ByID(687612914, id);
 }
 
-export function RetryDownload(id: string): $CancellablePromise<void> {
-    return $Call.ByID(2868588333, id);
+export function ScanDownloads(): $CancellablePromise<$models.DownloadItem[] | null> {
+    return $Call.ByID(4211574425);
 }
 
-export function SaveConfig(cfg: config$0.AppConfig): $CancellablePromise<void> {
-    return $Call.ByID(3442292638, cfg);
-}
-
-export function SetDownloadFormat(id: string, formatId: string): $CancellablePromise<void> {
-    return $Call.ByID(3058948344, id, formatId);
-}
-
-export function SetWailsApp(wailsApp: application$0.App | null): $CancellablePromise<void> {
-    return $Call.ByID(543693278, wailsApp);
+export function SetWailsApp(w: application$0.App | null): $CancellablePromise<void> {
+    return $Call.ByID(543693278, w);
 }
 
 export function SetWindow(w: application$0.WebviewWindow | null): $CancellablePromise<void> {

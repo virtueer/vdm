@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Clock,
-  ExternalLink,
   FolderOpen,
   Gauge,
   HardDrive,
+  Info,
   Pause,
   Play,
   RotateCcw,
@@ -23,6 +24,8 @@ interface DownloadCardProps {
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onShowInFolder: (id: string) => void;
+  onShowMediaInfo: (item: DownloadItem) => void;
+  onShowError?: (item: DownloadItem) => void;
   onDeleteRequest: (item: DownloadItem) => void;
 }
 
@@ -31,6 +34,8 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
   onPause,
   onResume,
   onShowInFolder,
+  onShowMediaInfo,
+  onShowError,
   onDeleteRequest,
 }) => {
   const [elapsed, setElapsed] = useState<number>(item.elapsedSecs || 0);
@@ -90,8 +95,14 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
         );
       case 'error':
         return (
-          <Badge variant="destructive" className="gap-1">
-            Hata
+          <Badge
+            variant="destructive"
+            className="gap-1 cursor-pointer hover:bg-destructive/90 transition-all shadow-sm hover:scale-105 active:scale-95"
+            onClick={() => onShowError?.(item)}
+            title="Hata detayları ve logları görüntülemek için tıklayın"
+          >
+            <AlertTriangle className="w-3 h-3" />
+            <span>Hata (Detay)</span>
           </Badge>
         );
       default:
@@ -204,29 +215,54 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
             )}
 
             {isError && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1 text-xs font-medium hover:bg-blue-500/10 hover:text-blue-500"
-                onClick={() => onResume(item.id)}
-                title="Tekrar Dene"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Tekrar Dene</span>
-              </Button>
+              <>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs font-medium bg-destructive/15 text-destructive hover:bg-destructive/25 border border-destructive/30"
+                  onClick={() => onShowError?.(item)}
+                  title="Hata loglarını ve detaylarını görüntüle"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Hata Detayı</span>
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1 text-xs font-medium hover:bg-blue-500/10 hover:text-blue-500"
+                  onClick={() => onResume(item.id)}
+                  title="Tekrar Dene"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Tekrar Dene</span>
+                </Button>
+              </>
             )}
 
             {isCompleted && (
-              <Button
-                variant="secondary"
-                size="sm"
-                className="h-8 gap-1.5 text-xs font-medium bg-secondary hover:bg-secondary/80 text-foreground"
-                onClick={() => onShowInFolder(item.id)}
-                title="Dosyayı sistem dosya yöneticisinde göster"
-              >
-                <FolderOpen className="w-3.5 h-3.5 text-emerald-500" />
-                <span>Klasörde Göster</span>
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs font-medium hover:bg-primary/10 hover:text-primary hover:border-primary/30"
+                  onClick={() => onShowMediaInfo(item)}
+                  title="Video analiz ve teknik detaylarını görüntüle (Çözünürlük, Codec, Bitrate, Süre)"
+                >
+                  <Info className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Analiz</span>
+                </Button>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs font-medium bg-secondary hover:bg-secondary/80 text-foreground"
+                  onClick={() => onShowInFolder(item.id)}
+                  title="Dosyayı sistem dosya yöneticisinde göster"
+                >
+                  <FolderOpen className="w-3.5 h-3.5 text-emerald-500" />
+                  <span>Klasörde Göster</span>
+                </Button>
+              </>
             )}
 
             <Button

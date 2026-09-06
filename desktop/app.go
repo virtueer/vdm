@@ -34,6 +34,10 @@ func (a *App) GetDownloads() []DownloadItem {
 	return a.manager.GetDownloads()
 }
 
+func (a *App) ScanDownloads() []DownloadItem {
+	return a.manager.ScanExistingDownloads()
+}
+
 func (a *App) AddDownload(urlStr, title string) string {
 	return a.manager.AddDownload(urlStr, title)
 }
@@ -52,4 +56,8 @@ func (a *App) RemoveDownload(id string, deleteFile bool) {
 
 func (a *App) ShowInFolder(id string) {
 	a.manager.ShowInFolder(id)
+}
+
+func (a *App) GetMediaInfo(target string) (*MediaInfo, error) {
+	return a.manager.GetMediaInfo(target)
 }
