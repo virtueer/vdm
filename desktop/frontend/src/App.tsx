@@ -156,7 +156,7 @@ export default function App() {
           />
         ) : (
           <ScrollArea className="h-full">
-            <div className="flex flex-col gap-3 p-6 max-w-5xl mx-auto w-full">
+            <div className="flex flex-col gap-3 p-4 sm:p-6 w-full">
               {downloads.map((item) => (
                 <DownloadCard
                   key={item.id}

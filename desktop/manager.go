@@ -320,10 +320,17 @@ func (m *Manager) PauseDownload(id string) {
 func (m *Manager) ResumeDownload(id string) {
 	m.mu.Lock()
 	for i, item := range m.downloads {
-		if item.ID == id && (item.Status == "paused" || item.Status == "error" || item.Status == "pending" || item.Status == "queued") {
+		if item.ID == id && (item.Status == "paused" || item.Status == "error" || item.Status == "pending" || item.Status == "queued" || item.Status == "completed") {
 			m.downloads[i].Status = "pending"
 			m.downloads[i].StatusMsg = "Kuyruğa alındı..."
 			m.downloads[i].ErrorDetails = ""
+			if item.Status == "completed" {
+				m.downloads[i].Progress = 0
+				m.downloads[i].DownloadedSize = "0 B"
+				m.downloads[i].Speed = ""
+				m.downloads[i].ElapsedSecs = 0
+				m.downloads[i].StartedAt = 0
+			}
 			m.saveItemLocked(m.downloads[i])
 			if m.wailsApp != nil {
 				m.wailsApp.Event.Emit("download_updated", m.downloads[i])

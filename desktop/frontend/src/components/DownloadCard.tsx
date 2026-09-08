@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
   FolderOpen,
   Gauge,
   HardDrive,
@@ -39,6 +41,20 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
   onDeleteRequest,
 }) => {
   const [elapsed, setElapsed] = useState<number>(item.elapsedSecs || 0);
+  const [copied, setCopied] = useState<boolean>(false);
+
+  const handleCopyUrl = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (item.url) {
+      try {
+        await navigator.clipboard.writeText(item.url);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy URL:', err);
+      }
+    }
+  };
 
   useEffect(() => {
     setElapsed(item.elapsedSecs || 0);
@@ -141,12 +157,25 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
               >
                 {item.title || 'İsimsiz Video'}
               </h4>
-              <p
-                className="text-xs text-muted-foreground truncate max-w-lg mt-0.5 flex items-center gap-1 opacity-80 hover:opacity-100"
-                title={item.url}
+              <button
+                type="button"
+                onClick={handleCopyUrl}
+                className="text-xs text-muted-foreground mt-0.5 flex items-center gap-1.5 text-left opacity-80 hover:opacity-100 hover:text-foreground transition-all cursor-pointer group max-w-full w-fit rounded px-1 -mx-1 py-0.5 hover:bg-muted/60"
+                title="Bağlantıyı kopyalamak için tıklayın"
               >
-                <span className="truncate">{item.url}</span>
-              </p>
+                {copied ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                    <span className="text-emerald-500 font-medium shrink-0">Kopyalandı!</span>
+                    <span className="truncate text-muted-foreground/70 text-[11px] max-w-xl">{item.url}</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3 text-muted-foreground/60 group-hover:text-primary shrink-0 transition-colors" />
+                    <span className="truncate group-hover:underline underline-offset-2">{item.url}</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
           <div className="shrink-0 flex items-center gap-2">
@@ -274,6 +303,17 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
 
             {isCompleted && (
               <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs font-medium hover:bg-blue-500/10 hover:text-blue-500 hover:border-blue-500/30"
+                  onClick={() => onResume(item.id)}
+                  title="Videoyu baştan tekrar indir"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-blue-500" />
+                  <span>Tekrar İndir</span>
+                </Button>
+
                 <Button
                   variant="outline"
                   size="sm"
