@@ -110,26 +110,38 @@ export default function App() {
     };
   }, [refreshDownloads]);
 
-  const handlePause = async (id: string) => {
+  const handlePause = useCallback(async (id: string) => {
     await api.pauseDownload(id);
-  };
+  }, []);
 
-  const handleResume = async (id: string) => {
+  const handleResume = useCallback(async (id: string) => {
     await api.resumeDownload(id);
-  };
+  }, []);
 
-  const handleShowInFolder = async (id: string) => {
+  const handleShowInFolder = useCallback(async (id: string) => {
     await api.showInFolder(id);
-  };
+  }, []);
 
-  const handleDeleteConfirm = async (id: string, deleteFile: boolean) => {
+  const handleShowMediaInfo = useCallback((target: DownloadItem) => {
+    setMediaInfoTarget(target);
+  }, []);
+
+  const handleShowError = useCallback((target: DownloadItem) => {
+    setErrorTarget(target);
+  }, []);
+
+  const handleDeleteRequest = useCallback((target: DownloadItem) => {
+    setDeleteTarget(target);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async (id: string, deleteFile: boolean) => {
     await api.removeDownload(id, deleteFile);
     setDownloads((prev) => prev.filter((d) => d.id !== id));
-  };
+  }, []);
 
-  const handleAddDownload = async (url: string, title: string) => {
+  const handleAddDownload = useCallback(async (url: string, title: string) => {
     await api.addDownload(url, title);
-  };
+  }, []);
 
   const activeCount = downloads.filter(
     (d) => d.status === 'downloading' || d.status === 'pending'
@@ -155,22 +167,23 @@ export default function App() {
             onOpenAddModal={() => setIsAddModalOpen(true)}
           />
         ) : (
-          <ScrollArea className="h-full">
+          <div className="h-full smooth-scroll">
             <div className="flex flex-col gap-3 p-4 sm:p-6 w-full">
               {downloads.map((item) => (
-                <DownloadCard
-                  key={item.id}
-                  item={item}
-                  onPause={handlePause}
-                  onResume={handleResume}
-                  onShowInFolder={handleShowInFolder}
-                  onShowMediaInfo={(target) => setMediaInfoTarget(target)}
-                  onShowError={(target) => setErrorTarget(target)}
-                  onDeleteRequest={(target) => setDeleteTarget(target)}
-                />
+                <div key={item.id} className="card-item">
+                  <DownloadCard
+                    item={item}
+                    onPause={handlePause}
+                    onResume={handleResume}
+                    onShowInFolder={handleShowInFolder}
+                    onShowMediaInfo={handleShowMediaInfo}
+                    onShowError={handleShowError}
+                    onDeleteRequest={handleDeleteRequest}
+                  />
+                </div>
               ))}
             </div>
-          </ScrollArea>
+          </div>
         )}
       </main>
 

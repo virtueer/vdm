@@ -72,8 +72,42 @@
   }
   body {
     @apply bg-background text-foreground h-screen w-screen overflow-hidden m-0 p-0 font-sans;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
   #root {
     @apply h-full w-full;
+  }
+
+  /* Smooth, hardware-accelerated scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.4);
+  }
+
+  .smooth-scroll {
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    transform: translateZ(0);
+    will-change: scroll-position;
+  }
+
+  .card-item {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 145px;
+    transform: translateZ(0);
   }
 }

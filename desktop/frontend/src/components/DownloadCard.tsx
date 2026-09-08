@@ -31,7 +31,7 @@ interface DownloadCardProps {
   onDeleteRequest: (item: DownloadItem) => void;
 }
 
-export const DownloadCard: React.FC<DownloadCardProps> = ({
+export const DownloadCard = React.memo<DownloadCardProps>(({
   item,
   onPause,
   onResume,
@@ -90,7 +90,7 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
     switch (item.status) {
       case 'downloading':
         return (
-          <Badge variant="info" className="gap-1 animate-pulse">
+          <Badge variant="info" className="gap-1.5 font-medium">
             <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
             İndiriliyor
           </Badge>
@@ -113,7 +113,7 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
         return (
           <Badge
             variant="destructive"
-            className="gap-1 cursor-pointer hover:bg-destructive/90 transition-all shadow-sm hover:scale-105 active:scale-95"
+            className="gap-1 cursor-pointer hover:bg-destructive/90 transition-colors shadow-xs"
             onClick={() => onShowError?.(item)}
             title="Hata detayları ve logları görüntülemek için tıklayın"
           >
@@ -142,7 +142,7 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
   const progressPercent = Math.min(Math.max(item.progress || 0, 0), 100);
 
   return (
-    <Card className="overflow-hidden border border-border/70 hover:border-border transition-all duration-200 shadow-sm hover:shadow-md bg-card">
+    <Card className="overflow-hidden border border-border/70 hover:border-border transition-colors bg-card shadow-xs">
       <CardContent className="p-4 flex flex-col gap-3">
         {/* Top Header Row: Title, URL, Status Badge */}
         <div className="flex items-start justify-between gap-3">
@@ -352,4 +352,19 @@ export const DownloadCard: React.FC<DownloadCardProps> = ({
       </CardContent>
     </Card>
   );
-};
+}, (prev, next) => {
+  return (
+    prev.item.id === next.item.id &&
+    prev.item.status === next.item.status &&
+    prev.item.progress === next.item.progress &&
+    prev.item.speed === next.item.speed &&
+    prev.item.downloadedSize === next.item.downloadedSize &&
+    prev.item.totalSize === next.item.totalSize &&
+    prev.item.statusMsg === next.item.statusMsg &&
+    prev.item.elapsedSecs === next.item.elapsedSecs &&
+    prev.item.title === next.item.title &&
+    prev.item.url === next.item.url
+  );
+});
+
+DownloadCard.displayName = 'DownloadCard';
