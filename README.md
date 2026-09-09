@@ -1,160 +1,194 @@
-# VDM - Video Download Manager
+<div align="center">
 
-This project includes a Chrome Extension that automatically captures video streams (m3u8, mp4, etc.) you watch or load in the background, and a Desktop Application (Go & Wails v3) that quickly downloads these videos using **yt-dlp** (for YouTube/HLS) and a **pure Go native HTTP downloader** (for direct media files).
+<img src="docs/images/icon.png" width="96" alt="VDM icon" />
 
-## Project Components
+# VDM — Video Download Manager
 
-The project consists of two main folders:
-- **`extension/`**: A Google Chrome / Chromium extension that captures videos and notifies the desktop app.
-- **`desktop/`**: A Go + Wails v3 based desktop GUI application that receives links from the extension (port 9614) and manages the download process.
+**Capture streaming video from your browser, download it natively, and manage every download from a compact desktop app.**
 
----
+A Chrome extension sniffs media requests on the pages you visit and hands them to a Go/Wails desktop app that downloads them with its own HLS and HTTP engines — no external downloader binaries required.
 
-## 🛠️ System Requirements
+<img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go" />
+<img src="https://img.shields.io/badge/Wails-v3_beta-DF0000" alt="Wails v3" />
+<img src="https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white" alt="React 19" />
+<img src="https://img.shields.io/badge/Tailwind-3.4-38BDF8?logo=tailwindcss&logoColor=white" alt="Tailwind CSS" />
+<img src="https://img.shields.io/badge/Chrome-MV3-4285F4?logo=googlechrome&logoColor=white" alt="Manifest V3" />
 
-In order for the application to download YouTube and HLS streams in the background, **yt-dlp** must be installed on your system (or downloaded automatically by VDM on first start):
+<img src="docs/images/desktop-dark.png" alt="VDM desktop app, dark theme" width="900" />
 
-1. **yt-dlp**: Advanced video downloader tool.
-
-### Installing Dependencies
-
-**Windows:**
-```powershell
-# If using Scoop:
-scoop install yt-dlp
-
-# Or if using Winget:
-winget install yt-dlp
-```
-
-**macOS:**
-```bash
-brew install yt-dlp
-```
-
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt update
-sudo apt install yt-dlp
-```
-
-**Linux (Arch/CachyOS etc.):**
-```bash
-sudo pacman -S yt-dlp
-```
+</div>
 
 ---
 
-## 🚀 Desktop App Installation (Desktop)
+## Highlights
 
-The desktop application is built with [Wails v3](https://v3.wails.io). If you want to compile the application from source, follow the steps below. If you have already downloaded a prebuilt version (`.exe`, `.dmg`, etc.), you can run it directly.
+- **Automatic capture** — the extension watches network traffic and in-page `<video>` tags, so HLS (`.m3u8`), DASH, MP4 and WebM streams show up without copying URLs by hand.
+- **Native download engines** — multi-part HTTP range downloads with resume, plus a built-in HLS engine that parses playlists, fetches init segments, and muxes with ffmpeg when it is available.
+- **Queue that behaves** — two active downloads at a time, the rest queued with visible positions; pause, resume and retry per item.
+- **Media analysis** — ffprobe-backed inspection of the finished file: container, duration, bitrate, and every video/audio stream.
+- **Survives restarts** — downloads are persisted in SQLite, and the app can rescan your Downloads folder to rebuild history.
+- **Desktop-grade UI** — compact 40px title strip, keyboard shortcuts, a live status bar, and light/dark themes you can switch at any time.
 
-### Compiling from Source
+## Screenshots
 
-1. Ensure **Go (1.25+)** is installed.
-2. Ensure **Node.js & npm** are installed.
-3. Install the Wails v3 CLI:
-   ```bash
-   go install github.com/wailsapp/wails/v3/cmd/wails3@latest
-   ```
-4. Install OS-specific Wails v3 dependencies:
-   - **Linux:** `sudo pacman -S base-devel gtk4 webkitgtk-6.0` (for Arch-based) or `sudo apt install libgtk-4-dev libwebkitgtk-6.0-dev build-essential` (for Debian/Ubuntu).
-   - **Windows:** No extra dependencies required (C++ Build Tools are sufficient).
-   - **macOS:** Xcode Command Line Tools (`xcode-select --install`).
-5. Open the terminal in the `desktop/` directory and build:
-   ```bash
-   cd desktop
-   wails3 build
-   ```
-6. The output will be generated in the `desktop/bin/` directory. Run the `desktop` (or `desktop.exe`) file.
+| Desktop — dark | Desktop — light |
+| --- | --- |
+| <img src="docs/images/desktop-dark.png" alt="Download list, dark theme" /> | <img src="docs/images/desktop-light.png" alt="Download list, light theme" /> |
 
-### 🐳 Cross-Compiling for All Platforms with Docker
+| Media analysis (ffprobe) | Error details with the system log |
+| --- | --- |
+| <img src="docs/images/desktop-media-info.png" alt="Media analysis modal" /> | <img src="docs/images/desktop-error.png" alt="Error modal" /> |
 
-Wails v3, through its Docker integration, allows you to cross-compile your code for all platforms on Windows, macOS, or Linux. It automatically resolves complex configurations like CGO.
+<div align="center">
 
-**Requirements:**
-- [Docker](https://www.docker.com/) must be installed and running on your system.
+| Extension popup — dark | Extension popup — light |
+| --- | --- |
+| <img src="docs/images/extension-dark.png" alt="Extension popup, dark theme" width="320" /> | <img src="docs/images/extension-light.png" alt="Extension popup, light theme" width="320" /> |
 
-You can automatically generate builds for all platforms (Windows, Linux, macOS) using the **`build.sh`** script located in the root directory:
+</div>
+
+The popup splits captures into **Video** and **Ses** (audio) tabs, previews them inline, and sends them to the desktop app — or downloads them straight through Chrome.
+
+## How it works
+
+```mermaid
+flowchart LR
+    P[Web page] -->|webRequest + DOM scan| BG[background.js]
+    BG --> PU[Popup UI<br/>React + Tailwind]
+    PU -->|POST /api/download| BR[HTTP bridge :9614]
+    BR --> MG[Download manager]
+    MG -->|.m3u8 / HLS| HLS[HLS engine<br/>segments + ffmpeg mux]
+    MG -->|direct media| HTTP[HTTP engine<br/>multi-part range + resume]
+    HLS --> FS[(Downloads folder)]
+    HTTP --> FS
+    MG <-->|Wails bindings + events| UI[Desktop UI<br/>React + Tailwind]
+    MG <--> DB[(SQLite)]
+```
+
+The desktop app is both the GUI and the server: on start it listens on `127.0.0.1:9614` for the extension, while the window talks to the same manager through Wails bindings and live events.
+
+## Requirements
+
+| | Needed for | Notes |
+| --- | --- | --- |
+| **ffmpeg** | HLS muxing (video + audio into one file) | Optional but recommended. Without it, HLS downloads fall back to direct segment concatenation. |
+| **ffprobe** | The media analysis panel | Ships with ffmpeg. |
+| **Go 1.25+**, **Node.js**, **pnpm** | Building from source | Not needed if you run a prebuilt binary. |
 
 ```bash
-# Grant execution permissions (Linux/Mac)
+# Arch / CachyOS
+sudo pacman -S ffmpeg
+
+# Debian / Ubuntu
+sudo apt install ffmpeg
+
+# macOS
+brew install ffmpeg
+
+# Windows
+winget install Gyan.FFmpeg
+```
+
+## Install
+
+### 1. Desktop app
+
+Run a prebuilt binary, or build from source:
+
+```bash
+go install github.com/wailsapp/wails/v3/cmd/wails3@latest
+
+# Linux build dependencies
+sudo pacman -S base-devel gtk4 webkitgtk-6.0          # Arch-based
+sudo apt install libgtk-4-dev libwebkitgtk-6.0-dev build-essential   # Debian/Ubuntu
+# macOS: xcode-select --install     Windows: C++ Build Tools
+
+cd desktop
+wails3 build      # output: desktop/bin/
+```
+
+Cross-compile every platform at once with Docker (`vdm-windows-amd64.exe`, `vdm-linux-amd64`, `vdm-macos-arm64`, `vdm-macos-amd64` into `desktop/releases/`):
+
+```bash
 chmod +x build.sh
-
-# Start the build system
 ./build.sh
 ```
 
-This process follows these steps:
-1. Downloads the necessary Wails Docker images (`wails3 task setup:docker`).
-2. Builds `vdm-windows-amd64.exe` for **Windows**.
-3. Builds `vdm-linux-amd64` for **Linux**.
-4. Builds `vdm-macos-arm64` and `vdm-macos-amd64` for **macOS** (Apple Silicon and Intel).
-
-You can find all outputs in the `desktop/releases/` folder.
-
----
-
-## 🧩 Extension Installation (Extension)
-
-The Chrome extension must be installed for the application to capture videos.
-
-1. (Optional) If you made changes to `extension/popup-app`:
-   - **Using Node.js / pnpm locally:**
-     ```bash
-     cd extension/popup-app && pnpm install && pnpm build
-     ```
-   - **Using Docker (No Node.js/pnpm required):**
-     ```bash
-     ./build-extension.sh
-     ```
-2. Open **Google Chrome** or a Chromium-based browser (Brave, Edge, etc.).
-3. Type `chrome://extensions/` in the address bar and press Enter.
-4. Toggle the **"Developer mode"** switch in the top right corner.
-5. Click the **"Load unpacked"** button in the top left.
-6. Select the main **`extension`** directory from the project (specifically the `extension` folder containing `manifest.json`, NOT `popup-app` or `popup-dist`).
-7. You can pin the extension icon to the top right of your browser.
-
----
-
-## 💡 How to Use
-
-1. First, launch the **VDM Desktop** application. When the app opens, it will start listening on port 9614 to communicate with the extension in the background.
-2. Go to a site containing a video (e.g., movie, series, or tutorial) in Chrome.
-3. When the extension captures a video, it will notify you with a red badge on its icon.
-4. Click the extension and press the **Download** button next to the video in the list.
-5. The download command will automatically be sent to the desktop app, and the download process will begin.
-6. Downloaded videos are saved to your system's default `Downloads` folder.
-
----
-
-## 🌟 Features
-
-- Captures all hidden streams in **M3U8 (HLS), DASH, MP4, and WebM** formats.
-- Real-time tracking of HTML5 `<video>` tags within pages.
-- Perform operations (Preview, Download, Copy) in a separate extension popup window.
-- Modern, eye-friendly *Dark Mode* and *Glassmorphism* design in the desktop application.
-- Ultra-fast download support with pure Go native HTTP streaming and range resumption.
-
----
-
-## 🧹 Development & Git Hooks
-
-This repository uses automated **pre-commit hooks** (Biome for TypeScript/React linting & formatting, and `golangci-lint` for Go).
-
-### Enabling Git Hooks
-
-After cloning the repository, simply run `pnpm install` in the root directory:
+### 2. Chrome extension
 
 ```bash
-pnpm install
+cd extension/popup-app && pnpm install && pnpm build   # or: ./build-extension.sh (Docker)
 ```
 
-This will automatically execute the `prepare` script and configure Git to use the `.githooks` folder.
+1. Open `chrome://extensions/` and enable **Developer mode**.
+2. Click **Load unpacked** and pick the **`extension/`** folder (the one with `manifest.json`).
+3. Pin the icon to the toolbar.
 
-If Git hooks are not triggering automatically on `git commit`, you can enable them manually with:
+## Usage
+
+1. Start the desktop app — it begins listening on port `9614`.
+2. Browse to a page with video. The extension badge shows how many streams it captured.
+3. Open the popup, pick the **Video** or **Ses** tab, and hit **VDM App** to download through the desktop app (or **Chrome** for a plain browser download).
+4. Track progress, pause/resume, inspect media info, or reveal the file in your file manager from the app.
+
+Files land in your system **Downloads** folder.
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>K</kbd> | Add a download by URL |
+| <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>R</kbd> | Rescan the Downloads folder |
+| <kbd>Esc</kbd> | Close the open dialog |
+
+## Project layout
+
+```
+xdm/
+├── desktop/                 Go + Wails v3 app  →  see desktop/README.md
+│   ├── manager.go           queue, state, events
+│   ├── direct.go            multi-part HTTP range downloader
+│   ├── hls.go               HLS playlist parsing, segments, muxing
+│   ├── server.go            HTTP bridge for the extension (:9614)
+│   └── frontend/            React 19 + Tailwind + shadcn/ui
+├── extension/               Chrome MV3 extension  →  see extension/README.md
+│   ├── background.js        capture, badge, storage
+│   ├── content.js           in-page <video> and title detection
+│   └── popup-app/           React popup (built into popup-dist/)
+├── assets/icon.svg          app icon master
+└── build.sh                 Docker cross-compile for all platforms
+```
+
+## Development
+
+```bash
+# Desktop app with hot reload (Go + frontend)
+cd desktop && wails3 dev
+
+# Frontend only
+cd desktop/frontend && pnpm dev
+
+# Extension popup only
+cd extension/popup-app && pnpm dev
+```
+
+Both frontends share the same checks:
+
+```bash
+pnpm lint        # Biome: lint + format
+pnpm typecheck   # tsc -b (project references)
+pnpm build       # production bundle
+```
+
+Pre-commit hooks (Biome for TS/React, `golangci-lint` for Go) are wired through `.githooks`. Running `pnpm install` in the repo root configures them; to enable them by hand:
 
 ```bash
 git config core.hooksPath .githooks
 chmod +x .githooks/pre-commit
 ```
+
+## Known limitations
+
+- **YouTube page URLs are not downloadable yet.** The extension detects them and can open them in a tab, but the desktop engines only handle direct media and HLS playlists — there is no yt-dlp integration.
+- DRM-protected streams (Widevine and friends) are out of scope.
+- The app UI is currently Turkish only.
