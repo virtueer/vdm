@@ -110,6 +110,45 @@ Theming is driven by CSS variables on `:root` / `.dark`, including semantic stat
 The four dialogs are `React.lazy` chunks, which keeps Radix Dialog and ScrollArea out of the startup
 bundle (~74 kB gzip initial, down from ~107 kB).
 
+## Icons and desktop integration
+
+The app icon comes from `../assets/icon.svg`. `build/appicon.png` is the master raster that
+`wails3 generate icons` turns into `build/windows/icon.ico` and `build/darwin/icons.icns`, which the
+Windows executable and the macOS `.app` bundle embed.
+
+Linux is different: GTK4 removed `gtk_window_set_icon`, so a running window cannot set its own icon.
+The window manager matches the window to an installed desktop entry instead, which is why:
+
+- `main.go` sets `Linux.ProgramName = "vdm"`, making the window's `WM_CLASS` match the
+  `StartupWMClass=vdm` line in the entry;
+- `build/linux/desktop` holds the entry (regenerated from `build/config.yml`), and the packaging
+  tasks copy it to `build/linux/vdm.desktop`;
+- the `.deb`/`.rpm` packages install the binary, the entry and
+  `/usr/share/icons/hicolor/128x128/apps/vdm.png` together;
+- `build/linux/install.sh` does the same into `~/.local` for the portable archive.
+
+Running the bare binary without any of that shows a generic icon — that is a Linux desktop
+integration limitation, not a build problem.
+
+## Releases
+
+`.github/workflows/release.yml` builds and publishes on every `v*` tag: Linux binary + `.deb` +
+`.rpm` + portable archive, a Windows `.exe` (built with `CGO_ENABLED=1`, which `go-sqlite3`
+requires), and `.app` bundles for both macOS architectures. `.github/scripts/set-version.sh` stamps
+the tag into `build/config.yml` and regenerates the platform assets first.
+
+Local equivalents:
+
+```bash
+wails3 task linux:build          # bin/vdm
+wails3 task linux:create:deb     # bin/vdm.deb
+wails3 task linux:create:rpm     # bin/vdm.rpm
+wails3 task linux:create:appimage
+wails3 task darwin:package       # bin/vdm.app
+wails3 task windows:build        # bin/vdm.exe
+../build.sh                      # all platforms via Docker cross-compilation
+```
+
 ## Commands
 
 ```bash
@@ -123,7 +162,7 @@ pnpm typecheck  # tsc -b
 pnpm build      # bundle into dist/
 ```
 
-Regenerate platform icons after changing `../assets/icon.svg`:
+Regenerate the platform icons after changing `../assets/icon.svg`:
 
 ```bash
 rsvg-convert -w 1024 -h 1024 ../assets/icon.svg -o build/appicon.png

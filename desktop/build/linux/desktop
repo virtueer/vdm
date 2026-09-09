@@ -1,13 +1,13 @@
 [Desktop Entry]
 Version=1.0
-Name=My Product
-Comment=A desktop application
+Name=Video Download Manager
+Comment=Captures video streams from the browser and downloads them natively
 # The Exec line includes %u to pass the URL to the application
-Exec=/usr/local/bin/desktop %u
+Exec=/usr/local/bin/vdm %u
 Terminal=false
 Type=Application
-Icon=desktop
+Icon=vdm
 Categories=Utility;
-StartupWMClass=desktop
+StartupWMClass=vdm
 
  

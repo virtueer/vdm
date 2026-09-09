@@ -10,6 +10,10 @@ desktop/frontend/dist/
 desktop/frontend/bindings/
 .task/
 
+# Generated at package time from build/linux/desktop
+desktop/build/linux/*.desktop
+desktop/build/linux/appimage/
+
 # Extension
 extension/popup-dist/
 extension/popup-app/dist/

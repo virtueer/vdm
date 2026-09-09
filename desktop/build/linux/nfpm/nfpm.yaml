@@ -3,26 +3,26 @@
 #
 # The lines below are called `modelines`. See `:help modeline`
 
-name: "desktop"
+name: "vdm"
 arch: ${GOARCH}
 platform: "linux"
-version: "0.1.0"
+version: "1.0.0"
 section: "default"
 priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
-description: "A desktop application"
-vendor: "My Company"
+description: "Captures video streams from the browser and downloads them natively"
+vendor: "virtueer"
 homepage: "https://wails.io"
 license: "MIT"
 release: "1"
 
 contents:
-  - src: "./bin/desktop"
-    dst: "/usr/local/bin/desktop"
+  - src: "./bin/vdm"
+    dst: "/usr/local/bin/vdm"
   - src: "./build/appicon.png"
-    dst: "/usr/share/icons/hicolor/128x128/apps/desktop.png"
-  - src: "./build/linux/desktop.desktop"
-    dst: "/usr/share/applications/desktop.desktop"
+    dst: "/usr/share/icons/hicolor/128x128/apps/vdm.png"
+  - src: "./build/linux/vdm.desktop"
+    dst: "/usr/share/applications/vdm.desktop"
 
 # Default dependencies for the GTK4 + WebKitGTK 6.0 stack (Ubuntu 24.04+ / Debian 13+)
 depends:

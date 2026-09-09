@@ -20,6 +20,28 @@ A Chrome extension sniffs media requests on the pages you visit and hands them t
 
 ---
 
+## Download
+
+Prebuilt builds for every tagged release are on the
+[Releases page](https://github.com/virtueer/xdm/releases/latest):
+
+| Platform | File | Notes |
+| --- | --- | --- |
+| Windows | `vdm-windows-amd64.exe` | Unsigned — SmartScreen may warn on first run |
+| Linux (Debian/Ubuntu) | `vdm-linux-amd64.deb` | `sudo dpkg -i vdm-linux-amd64.deb` |
+| Linux (Fedora/RHEL) | `vdm-linux-x86_64.rpm` | `sudo rpm -i vdm-linux-x86_64.rpm` |
+| Linux (portable) | `vdm-linux-amd64.tar.gz` | Extract, then run `./install.sh` |
+| macOS (Apple Silicon) | `vdm-macos-arm64.zip` | Unsigned — first run: right-click → Open |
+| macOS (Intel) | `vdm-macos-amd64.zip` | Unsigned — first run: right-click → Open |
+
+> **Linux app icon.** GTK4 removed runtime window icons, so the icon comes from an installed desktop
+> entry. The `.deb`, `.rpm` and the portable `install.sh` put `vdm.desktop` and the icon in place;
+> a bare binary will show a generic icon. Building from source? Run
+> `desktop/build/linux/install.sh` after `wails3 task linux:build` — it installs the binary, entry
+> and icon into `~/.local`.
+
+The Chrome extension is not on the Web Store — load it unpacked (see [Install](#install)).
+
 ## Highlights
 
 - **Automatic capture** — the extension watches network traffic and in-page `<video>` tags, so HLS (`.m3u8`), DASH, MP4 and WebM streams show up without copying URLs by hand.
@@ -93,7 +115,8 @@ winget install Gyan.FFmpeg
 
 ### 1. Desktop app
 
-Run a prebuilt binary, or build from source:
+Grab a build from the [Releases page](https://github.com/virtueer/xdm/releases/latest), or build
+from source:
 
 ```bash
 go install github.com/wailsapp/wails/v3/cmd/wails3@latest
@@ -179,6 +202,20 @@ pnpm lint        # Biome: lint + format
 pnpm typecheck   # tsc -b (project references)
 pnpm build       # production bundle
 ```
+
+### Cutting a release
+
+Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which
+builds on Linux, Windows and both macOS architectures, then publishes the artifacts above:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow stamps the tag into `desktop/build/config.yml` and regenerates the platform build
+assets, so package metadata and the Windows file version always match the tag. It can also be run
+manually from the Actions tab with a tag as input.
 
 Pre-commit hooks (Biome for TS/React, `golangci-lint` for Go) are wired through `.githooks`. Running `pnpm install` in the repo root configures them; to enable them by hand:
 

@@ -31,20 +31,20 @@ mkdir -p releases
 
 echo "[2/4] Building for Windows (x86_64)..."
 wails3 build GOOS=windows GOARCH=amd64
-cp bin/desktop.exe releases/vdm-windows-amd64.exe || echo "Failed to copy Windows binary"
+cp bin/vdm.exe releases/vdm-windows-amd64.exe || echo "Failed to copy Windows binary"
 
 echo "[3/4] Building for Linux (x86_64)..."
 wails3 build GOOS=linux GOARCH=amd64
-cp bin/desktop releases/vdm-linux-amd64 || echo "Failed to copy Linux binary"
+cp bin/vdm releases/vdm-linux-amd64 || echo "Failed to copy Linux binary"
 
 echo "[4/4] Building for macOS (Universal / ARM64 & Intel)..."
 # Build for Apple Silicon
 wails3 build GOOS=darwin GOARCH=arm64
-cp bin/desktop releases/vdm-macos-arm64 || echo "Failed to copy macOS ARM binary"
+cp bin/vdm releases/vdm-macos-arm64 || echo "Failed to copy macOS ARM binary"
 
 # Build for Intel Mac
 wails3 build GOOS=darwin GOARCH=amd64
-cp bin/desktop releases/vdm-macos-amd64 || echo "Failed to copy macOS Intel binary"
+cp bin/vdm releases/vdm-macos-amd64 || echo "Failed to copy macOS Intel binary"
 
 # Note: For universal binary, wails3 provides a specific task:
 # wails3 task darwin:build:universal
