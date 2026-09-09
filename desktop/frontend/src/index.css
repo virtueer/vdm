@@ -4,65 +4,78 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    /* Surface stack: background -> card -> muted */
+    --background: 240 14% 97%;
+    --foreground: 240 10% 12%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 240 10% 12%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 240 10% 12%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 240 6% 14%;
+    --primary-foreground: 0 0% 98%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 240 8% 93%;
+    --secondary-foreground: 240 6% 14%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 240 8% 93%;
+    --muted-foreground: 240 4% 42%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 240 8% 90%;
+    --accent-foreground: 240 6% 14%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 240 8% 86%;
+    --input: 240 8% 82%;
+    --ring: 240 5% 60%;
+
+    /* Status tones — one variable per meaning, resolved per theme */
+    --success: 161 88% 28%;
+    --warning: 32 92% 40%;
+    --info: 200 95% 37%;
+    --danger: 0 72% 48%;
 
     --radius: 0.5rem;
   }
 
   .dark {
-    --background: 224 20% 12%;
-    --foreground: 210 40% 98%;
+    /* Zinc surfaces, kept off the extreme end of the scale */
+    --background: 240 6% 12%;
+    --foreground: 240 6% 92%;
 
-    --card: 224 20% 15%;
-    --card-foreground: 210 40% 98%;
+    --card: 240 5% 15%;
+    --card-foreground: 240 6% 92%;
 
-    --popover: 224 20% 15%;
-    --popover-foreground: 210 40% 98%;
+    --popover: 240 5% 16%;
+    --popover-foreground: 240 6% 92%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 240 6% 93%;
+    --primary-foreground: 240 6% 14%;
 
-    --secondary: 224 20% 20%;
-    --secondary-foreground: 210 40% 98%;
+    --secondary: 240 4% 20%;
+    --secondary-foreground: 240 6% 92%;
 
-    --muted: 224 20% 20%;
-    --muted-foreground: 215 20.2% 65.1%;
+    --muted: 240 4% 20%;
+    --muted-foreground: 240 5% 66%;
 
-    --accent: 224 20% 20%;
-    --accent-foreground: 210 40% 98%;
+    --accent: 240 4% 25%;
+    --accent-foreground: 240 6% 93%;
 
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 68% 58%;
+    --destructive-foreground: 0 0% 98%;
 
-    --border: 224 20% 25%;
-    --input: 224 20% 25%;
-    --ring: 224 20% 50%;
+    --border: 240 4% 26%;
+    --input: 240 4% 30%;
+    --ring: 240 5% 48%;
+
+    --success: 158 64% 52%;
+    --warning: 43 96% 56%;
+    --info: 199 92% 60%;
+    --danger: 0 91% 71%;
   }
 }
 
@@ -70,16 +83,20 @@
   * {
     @apply border-border;
   }
+
   body {
-    @apply bg-background text-foreground h-screen w-screen overflow-hidden m-0 p-0 font-sans;
+    @apply m-0 h-screen w-screen overflow-hidden bg-background p-0 font-sans text-foreground;
+    font-size: 13px;
+    line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    font-variant-numeric: tabular-nums;
   }
+
   #root {
     @apply h-full w-full;
   }
 
-  /* Smooth, hardware-accelerated scrollbar */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -92,22 +109,33 @@
     border-radius: 9999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground) / 0.4);
+    background: hsl(var(--muted-foreground) / 0.5);
   }
+}
 
+@layer components {
+  /* Window chrome: drag the app from the title strip (Wails) */
+  .drag-region {
+    --wails-draggable: drag;
+  }
+  .no-drag {
+    --wails-draggable: no-drag;
+  }
+}
+
+@layer utilities {
+  /* Hardware-accelerated list scrolling */
   .smooth-scroll {
     overflow-y: auto;
     overflow-x: hidden;
-    scroll-behavior: smooth;
     overscroll-behavior: contain;
-    -webkit-overflow-scrolling: touch;
     transform: translateZ(0);
     will-change: scroll-position;
   }
 
   .card-item {
     content-visibility: auto;
-    contain-intrinsic-size: 0 145px;
+    contain-intrinsic-size: 0 137px;
     transform: translateZ(0);
   }
 }

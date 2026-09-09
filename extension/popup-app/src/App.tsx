@@ -1,164 +1,125 @@
-import { EyeOff, Maximize2, Settings, ToggleLeft } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import {
+  ChevronRight,
+  Download,
+  Moon,
+  Music,
+  Sun,
+  ToggleLeft,
+  ToggleRight,
+  Video,
+} from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { MediaList } from '@/components/media/MediaList';
+import { StatusBar } from '@/components/shell/StatusBar';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { VideoLink } from './types';
-import { MediaCard } from './components/MediaCard';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useBridgeConnection } from '@/hooks/useBridgeConnection';
+import { useTheme } from '@/hooks/useTheme';
+import { useVideoLinks } from '@/hooks/useVideoLinks';
+import { mediaKindOf } from '@/lib/media';
+import { cn } from '@/lib/utils';
+
+const shell = cn(
+  'flex h-[500px] w-full max-w-lg flex-col overflow-hidden bg-background',
+  'border-x border-border/60 sm:h-screen'
+);
+
+const titleBar =
+  'flex h-10 shrink-0 items-center gap-2.5 border-b border-border/60 bg-card/70 px-3';
+
+const tabCount = 'font-mono text-[10px] tracking-tight text-muted-foreground/70';
 
 export default function App() {
-  const [links, setLinks] = useState<VideoLink[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [currentTabId, setCurrentTabId] = useState<number | null>(null);
-  const [autoIntercept, setAutoIntercept] = useState(true);
+  const { links, loading, pageHost, autoIntercept, toggleAutoIntercept, setHidden } =
+    useVideoLinks();
+  const bridgeState = useBridgeConnection();
+  const { theme, toggleTheme } = useTheme();
+  const [tab, setTab] = useState<'video' | 'audio'>('video');
 
-  useEffect(() => {
-    // Only run if we are in a chrome extension environment
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      // Get auto-intercept setting
-      chrome.runtime.sendMessage({ action: 'getAutoIntercept' }, (response) => {
-        if (response && response.autoIntercept !== undefined) {
-          setAutoIntercept(response.autoIntercept);
-        }
-      });
+  const { video, audio } = useMemo(() => {
+    const grouped = { video: [] as typeof links, audio: [] as typeof links };
+    for (const link of links) grouped[mediaKindOf(link)].push(link);
+    return grouped;
+  }, [links]);
 
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const tab = tabs[0];
-        if (tab.id) {
-          setCurrentTabId(tab.id);
-          chrome.runtime.sendMessage({ action: 'getVideoLinks', tabId: tab.id }, (response) => {
-            if (response?.links) {
-              setLinks(response.links);
-            }
-            setLoading(false);
-          });
-        } else {
-          setLoading(false);
-        }
-      });
-    } else {
-      // Mock data for local testing
-      setLinks([
-        { url: 'https://example.com/video.mp4', type: 'network', size: '50 MB', timestamp: 12345 },
-        { url: 'https://example.com/audio.mp3', type: 'network', size: '5 MB', timestamp: 12346 },
-        {
-          url: 'https://example.com/hidden.mp4',
-          type: 'network',
-          size: '10 MB',
-          timestamp: 12347,
-          hidden: true,
-        },
-      ]);
-      setLoading(false);
-    }
-  }, []);
-
-  const handleAction = (actionName: string, url: string) => {
-    if (typeof chrome !== 'undefined' && chrome.tabs && currentTabId) {
-      chrome.runtime.sendMessage({ action: actionName, tabId: currentTabId, url: url }, () => {
-        // Update local state instantly
-        setLinks((prev) =>
-          prev.map((link) =>
-            link.url === url ? { ...link, hidden: actionName === 'hideVideoLink' } : link
-          )
-        );
-      });
-    }
-  };
-
-  const toggleAutoIntercept = () => {
-    if (typeof chrome !== 'undefined') {
-      chrome.runtime.sendMessage({ action: 'toggleAutoIntercept' }, (response) => {
-        if (response?.success) {
-          setAutoIntercept(response.autoIntercept);
-        }
-      });
-    }
-  };
-
-  const handleOpenInTab = () => {
-    if (typeof chrome !== 'undefined' && chrome.tabs?.create && chrome.runtime?.getURL) {
-      chrome.tabs.create({ url: chrome.runtime.getURL('popup-dist/index.html') });
-    } else {
-      window.open(window.location.href, '_blank');
-    }
-  };
+  const visibleCount = links.filter((link) => !link.hidden).length;
+  const hiddenCount = links.length - visibleCount;
 
   return (
-    <div className="w-full max-w-lg flex flex-col h-[500px] sm:h-screen bg-background shadow-md border-x border-border/50">
-      <div className="flex items-center justify-between px-4 py-3 bg-primary text-primary-foreground shadow-sm">
-        <h2 className="text-sm font-semibold m-0 tracking-tight">Video Download Manager</h2>
-        <div className="flex items-center gap-1">
+    <div className={shell}>
+      <header className={titleBar}>
+        <div className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-muted text-foreground/80">
+          <Download className="h-3.5 w-3.5" />
+        </div>
+
+        <nav className="flex min-w-0 items-center gap-2 text-[13px]">
+          <span className="font-medium tracking-tight text-foreground/90">VDM</span>
+          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
+          <span className="truncate text-muted-foreground">{pageHost || 'Bu sayfa'}</span>
+        </nav>
+
+        <div className="ml-auto flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7 text-primary-foreground hover:bg-primary/80"
-            onClick={handleOpenInTab}
-            title="Eklentiyi Ayrı Sekmede Aç (Tam Ekran İzni İçin)"
-          >
-            <Maximize2 className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7 text-primary-foreground hover:bg-primary/80"
             onClick={toggleAutoIntercept}
-            title={autoIntercept ? 'Auto-intercept is ON' : 'Auto-intercept is OFF'}
+            title={autoIntercept ? 'Otomatik yakalama açık' : 'Otomatik yakalama kapalı'}
           >
-            {autoIntercept ? <ToggleLeft className="h-4 w-4" /> : <Settings className="h-4 w-4" />}
+            {autoIntercept ? (
+              <ToggleRight className="text-success" />
+            ) : (
+              <ToggleLeft className="text-muted-foreground/60" />
+            )}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Açık temaya geç' : 'Koyu temaya geç'}
+          >
+            {theme === 'dark' ? <Sun /> : <Moon />}
           </Button>
         </div>
-      </div>
+      </header>
 
-      <div className="px-4 py-2 bg-muted/50 border-b">
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-muted-foreground">Auto-intercept downloads:</span>
-          <span className={`font-medium ${autoIntercept ? 'text-green-600' : 'text-red-600'}`}>
-            {autoIntercept ? 'ON' : 'OFF'}
-          </span>
-        </div>
-      </div>
+      <Tabs
+        value={tab}
+        onValueChange={(value) => setTab(value as 'video' | 'audio')}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <TabsList className="mx-2 mt-2 flex">
+          <TabsTrigger value="video">
+            <Video />
+            <span>Video</span>
+            <span className={tabCount}>{video.length}</span>
+          </TabsTrigger>
+          <TabsTrigger value="audio">
+            <Music />
+            <span>Ses</span>
+            <span className={tabCount}>{audio.length}</span>
+          </TabsTrigger>
+        </TabsList>
 
-      <ScrollArea className="flex-1 p-3">
-        {loading ? (
-          <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
-            Scanning for media...
-          </div>
-        ) : links.length === 0 ? (
-          <div className="flex items-center justify-center p-8 text-muted-foreground text-sm">
-            No media found on this page.
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {links.map((video, idx) =>
-              video.hidden ? (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-3 rounded-lg border border-dashed bg-muted/50 transition-opacity"
-                >
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <EyeOff className="w-4 h-4" />
-                    <span className="text-xs italic">Hidden Link</span>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-xs"
-                    onClick={() => handleAction('showVideoLink', video.url)}
-                  >
-                    Restore
-                  </Button>
-                </div>
-              ) : (
-                <MediaCard
-                  key={idx}
-                  video={video}
-                  onHide={() => handleAction('hideVideoLink', video.url)}
-                />
-              )
-            )}
-          </div>
-        )}
-      </ScrollArea>
+        <TabsContent value="video" className="min-h-0 flex-1">
+          <ScrollArea className="h-full">
+            <MediaList links={video} loading={loading} onSetHidden={setHidden} kind="video" />
+          </ScrollArea>
+        </TabsContent>
+
+        <TabsContent value="audio" className="min-h-0 flex-1">
+          <ScrollArea className="h-full">
+            <MediaList links={audio} loading={loading} onSetHidden={setHidden} kind="audio" />
+          </ScrollArea>
+        </TabsContent>
+      </Tabs>
+
+      <StatusBar
+        connection={bridgeState}
+        mediaCount={visibleCount}
+        hiddenCount={hiddenCount}
+        autoIntercept={autoIntercept}
+      />
     </div>
   );
 }

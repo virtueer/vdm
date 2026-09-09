@@ -21,6 +21,9 @@ extension/popup-app/node_modules/
 *.dmg
 *.AppImage
 
+# TypeScript incremental build state
+*.tsbuildinfo
+
 # Go & Build Artifacts
 *.test
 *.prof

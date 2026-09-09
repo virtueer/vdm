@@ -51,6 +51,11 @@ module.exports = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
+        // Status tones; each resolves per theme, so no dark: pairs are needed.
+        success: 'hsl(var(--success))',
+        warning: 'hsl(var(--warning))',
+        info: 'hsl(var(--info))',
+        danger: 'hsl(var(--danger))',
       },
       borderRadius: {
         lg: 'var(--radius)',
