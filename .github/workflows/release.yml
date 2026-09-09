@@ -135,16 +135,10 @@ jobs:
           path: dist/*
 
   macos:
-    name: macOS (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-14
-          - arch: amd64
-            runner: macos-13
+    # One universal (arm64 + amd64) bundle, built on Apple Silicon: the Intel
+    # runner image is no longer offered, and lipo covers both architectures.
+    name: macOS (universal)
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
         with:
@@ -167,18 +161,18 @@ jobs:
       - name: Stamp the release version
         run: ./.github/scripts/set-version.sh "${{ inputs.tag || github.ref_name }}"
 
-      - name: Build the app bundle
+      - name: Build the universal app bundle
         working-directory: desktop
-        run: wails3 task darwin:package
+        run: wails3 task darwin:package:universal
 
       - name: Collect artifacts
         run: |
           mkdir -p dist
-          ditto -c -k --keepParent desktop/bin/vdm.app "dist/vdm-macos-${{ matrix.arch }}.zip"
+          ditto -c -k --keepParent desktop/bin/vdm.app dist/vdm-macos-universal.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.arch }}
+          name: macos
           path: dist/*
 
   release:

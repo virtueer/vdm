@@ -31,8 +31,7 @@ Prebuilt builds for every tagged release are on the
 | Linux (Debian/Ubuntu) | `vdm-linux-amd64.deb` | `sudo dpkg -i vdm-linux-amd64.deb` |
 | Linux (Fedora/RHEL) | `vdm-linux-x86_64.rpm` | `sudo rpm -i vdm-linux-x86_64.rpm` |
 | Linux (portable) | `vdm-linux-amd64.tar.gz` | Extract, then run `./install.sh` |
-| macOS (Apple Silicon) | `vdm-macos-arm64.zip` | Unsigned — first run: right-click → Open |
-| macOS (Intel) | `vdm-macos-amd64.zip` | Unsigned — first run: right-click → Open |
+| macOS (universal) | `vdm-macos-universal.zip` | Apple Silicon + Intel; unsigned — first run: right-click → Open |
 
 > **Linux app icon.** GTK4 removed runtime window icons, so the icon comes from an installed desktop
 > entry. The `.deb`, `.rpm` and the portable `install.sh` put `vdm.desktop` and the icon in place;

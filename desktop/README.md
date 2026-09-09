@@ -134,8 +134,9 @@ integration limitation, not a build problem.
 
 `.github/workflows/release.yml` builds and publishes on every `v*` tag: Linux binary + `.deb` +
 `.rpm` + portable archive, a Windows `.exe` (built with `CGO_ENABLED=1`, which `go-sqlite3`
-requires), and `.app` bundles for both macOS architectures. `.github/scripts/set-version.sh` stamps
-the tag into `build/config.yml` and regenerates the platform assets first.
+requires), and a universal macOS `.app` bundle (lipo of arm64 + amd64, built on Apple Silicon since
+the Intel runner image is retired). `.github/scripts/set-version.sh` stamps the tag into
+`build/config.yml` and regenerates the platform assets first.
 
 Local equivalents:
 
@@ -144,7 +145,7 @@ wails3 task linux:build          # bin/vdm
 wails3 task linux:create:deb     # bin/vdm.deb
 wails3 task linux:create:rpm     # bin/vdm.rpm
 wails3 task linux:create:appimage
-wails3 task darwin:package       # bin/vdm.app
+wails3 task darwin:package:universal  # bin/vdm.app (arm64 + amd64)
 wails3 task windows:build        # bin/vdm.exe
 ../build.sh                      # all platforms via Docker cross-compilation
 ```
