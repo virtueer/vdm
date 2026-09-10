@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -31,22 +30,18 @@ func (m *Manager) downloadDirect(ctx context.Context, id, downloadUrl, dest stri
 	partFile := dest + ".part"
 	stateFile := dest + ".vdm_state"
 
-	// Probe remote URL for range support & content length
-	probeReq, err := http.NewRequestWithContext(ctx, "HEAD", downloadUrl, nil)
-	if err != nil {
-		return fmt.Errorf("request creation failed: %w", err)
-	}
-	probeReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
-	if parsedUrl, err := url.Parse(downloadUrl); err == nil {
-		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
-		probeReq.Header.Set("Referer", origin+"/")
-		probeReq.Header.Set("Origin", origin)
-	}
+	notify := m.notifyRetry(id)
 
+	// Probe the URL for range support and content length. A rate limited probe
+	// is retried too, otherwise a 429 here would silently downgrade a resumable
+	// multi-part download to a single stream.
 	var totalBytes int64 = -1
 	var supportsRange = false
 
-	if probeResp, err := defaultClient.Do(probeReq); err == nil {
+	probeResp, err := doWithRetry(ctx, probeAttempts, func() (*http.Request, error) {
+		return mediaRequest(ctx, "HEAD", downloadUrl)
+	}, notify)
+	if err == nil {
 		if probeResp.StatusCode == http.StatusOK || probeResp.StatusCode == http.StatusPartialContent {
 			totalBytes = probeResp.ContentLength
 			if strings.EqualFold(probeResp.Header.Get("Accept-Ranges"), "bytes") || probeResp.StatusCode == http.StatusPartialContent {
@@ -54,28 +49,35 @@ func (m *Manager) downloadDirect(ctx context.Context, id, downloadUrl, dest stri
 			}
 		}
 		probeResp.Body.Close()
+	} else if ctx.Err() != nil {
+		return ctx.Err()
 	}
 
 	// Double check with a 0-0 Range probe if HEAD was inconclusive
 	if !supportsRange || totalBytes <= 0 {
-		rangeReq, err := http.NewRequestWithContext(ctx, "GET", downloadUrl, nil)
-		if err == nil {
-			rangeReq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
-			rangeReq.Header.Set("Range", "bytes=0-0")
-			if rangeResp, err := defaultClient.Do(rangeReq); err == nil {
-				if rangeResp.StatusCode == http.StatusPartialContent {
-					supportsRange = true
-					cr := rangeResp.Header.Get("Content-Range")
-					if slashIdx := strings.LastIndex(cr, "/"); slashIdx != -1 {
-						if parsedLen, err := strconv.ParseInt(cr[slashIdx+1:], 10, 64); err == nil {
-							totalBytes = parsedLen
-						}
-					}
-				} else if rangeResp.StatusCode == http.StatusOK {
-					totalBytes = rangeResp.ContentLength
-				}
-				rangeResp.Body.Close()
+		rangeResp, err := doWithRetry(ctx, probeAttempts, func() (*http.Request, error) {
+			req, err := mediaRequest(ctx, "GET", downloadUrl)
+			if err != nil {
+				return nil, err
 			}
+			req.Header.Set("Range", "bytes=0-0")
+			return req, nil
+		}, notify)
+		if err == nil {
+			if rangeResp.StatusCode == http.StatusPartialContent {
+				supportsRange = true
+				cr := rangeResp.Header.Get("Content-Range")
+				if slashIdx := strings.LastIndex(cr, "/"); slashIdx != -1 {
+					if parsedLen, err := strconv.ParseInt(cr[slashIdx+1:], 10, 64); err == nil {
+						totalBytes = parsedLen
+					}
+				}
+			} else if rangeResp.StatusCode == http.StatusOK {
+				totalBytes = rangeResp.ContentLength
+			}
+			rangeResp.Body.Close()
+		} else if ctx.Err() != nil {
+			return ctx.Err()
 		}
 	}
 
@@ -183,7 +185,7 @@ func (m *Manager) downloadMultipartRange(ctx context.Context, id, downloadUrl, d
 					m.downloads[i].Speed = speedStr
 					m.downloads[i].DownloadedSize = dlStr
 					m.downloads[i].TotalSize = totStr
-					m.downloads[i].StatusMsg = fmt.Sprintf("Turbo (%d connections)...", numWorkers)
+					m.downloads[i].StatusMsg = fmt.Sprintf("Turbo · %d bağlantı", numWorkers)
 				}
 				break
 			}
@@ -197,13 +199,15 @@ func (m *Manager) downloadMultipartRange(ctx context.Context, id, downloadUrl, d
 				"downloaded": dlStr,
 				"total":      totStr,
 				"speed":      speedStr,
-				"statusMsg":  fmt.Sprintf("Turbo (%d connections)...", numWorkers),
+				"statusMsg":  fmt.Sprintf("Turbo · %d bağlantı", numWorkers),
 			})
 		}
 
 		lastReportTime = now
 		lastReportBytes = currentBytes
 	}
+
+	notify := m.notifyRetry(id)
 
 	var wg sync.WaitGroup
 	var firstErr error
@@ -221,65 +225,107 @@ func (m *Manager) downloadMultipartRange(ctx context.Context, id, downloadUrl, d
 				return
 			}
 
-			req, err := http.NewRequestWithContext(ctx, "GET", downloadUrl, nil)
-			if err != nil {
-				errOnce.Do(func() { firstErr = err })
-				return
-			}
-			req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
-			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", curStart, part.EndOffset))
-			if parsedUrl, err := url.Parse(downloadUrl); err == nil {
-				origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
-				req.Header.Set("Referer", origin+"/")
-				req.Header.Set("Origin", origin)
-			}
-
-			resp, err := defaultClient.Do(req)
-			if err != nil {
-				if ctx.Err() == nil {
-					errOnce.Do(func() { firstErr = err })
-				}
-				return
-			}
-			defer resp.Body.Close()
-
-			if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
-				errOnce.Do(func() { firstErr = fmt.Errorf("worker %d bad status: %s", workerIndex, resp.Status) })
-				return
-			}
-
 			buf := make([]byte, 256*1024)
-			for {
-				select {
-				case <-ctx.Done():
+			attempt := 0
+
+			// Each pass fetches whatever is left of this part. A dropped
+			// connection, a rate limit or a truncated body only costs a backoff
+			// and a new Range request from the current offset.
+			for curStart <= part.EndOffset {
+				if ctx.Err() != nil {
 					return
-				default:
 				}
 
-				n, readErr := resp.Body.Read(buf)
-				if n > 0 {
-					writePos := curStart
-					if _, writeErr := file.WriteAt(buf[:n], writePos); writeErr != nil {
-						errOnce.Do(func() { firstErr = writeErr })
+				from := curStart
+				resp, err := doWithRetry(ctx, maxRetryAttempts, func() (*http.Request, error) {
+					req, reqErr := mediaRequest(ctx, "GET", downloadUrl)
+					if reqErr != nil {
+						return nil, reqErr
+					}
+					req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", from, part.EndOffset))
+					return req, nil
+				}, notify)
+				if err != nil {
+					if ctx.Err() == nil {
+						errOnce.Do(func() { firstErr = err })
+					}
+					return
+				}
+
+				if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
+					resp.Body.Close()
+					errOnce.Do(func() { firstErr = fmt.Errorf("worker %d bad status: %s", workerIndex, resp.Status) })
+					return
+				}
+
+				var written int64
+				var streamErr error
+
+				for {
+					if ctx.Err() != nil {
+						resp.Body.Close()
 						return
 					}
-					curStart += int64(n)
-					atomic.AddInt64(&totalDownloaded, int64(n))
 
-					stateMu.Lock()
-					state.Parts[workerIndex].Downloaded += int64(n)
-					stateMu.Unlock()
+					n, readErr := resp.Body.Read(buf)
+					if n > 0 {
+						if _, writeErr := file.WriteAt(buf[:n], curStart); writeErr != nil {
+							resp.Body.Close()
+							errOnce.Do(func() { firstErr = writeErr })
+							return
+						}
+						curStart += int64(n)
+						written += int64(n)
+						atomic.AddInt64(&totalDownloaded, int64(n))
 
-					reportProgress(false)
-				}
+						stateMu.Lock()
+						state.Parts[workerIndex].Downloaded += int64(n)
+						stateMu.Unlock()
 
-				if readErr != nil {
-					if readErr == io.EOF {
+						reportProgress(false)
+					}
+
+					if readErr != nil {
+						if readErr != io.EOF {
+							streamErr = readErr
+						}
 						break
 					}
-					if ctx.Err() == nil {
-						errOnce.Do(func() { firstErr = readErr })
+				}
+				resp.Body.Close()
+
+				if streamErr == nil {
+					if curStart > part.EndOffset {
+						return
 					}
+					// The body ended before the range did: resume the remainder
+					// instead of leaving a hole in the file.
+					streamErr = fmt.Errorf("stream ended early at %d/%d", curStart, part.EndOffset)
+				}
+
+				if !retryableError(ctx, streamErr) {
+					if ctx.Err() == nil {
+						errOnce.Do(func() { firstErr = streamErr })
+					}
+					return
+				}
+
+				// Bytes landed, so the connection was healthy for a while and the
+				// budget starts over; a loop that makes no progress still ends.
+				if written > 0 {
+					attempt = 0
+				}
+				attempt++
+				if attempt > maxRetryAttempts {
+					errOnce.Do(func() {
+						firstErr = fmt.Errorf("worker %d: %d denemeden sonra vazgeçildi: %w", workerIndex, maxRetryAttempts, streamErr)
+					})
+					return
+				}
+
+				wait := retryDelay(attempt, "")
+				notify(attempt, wait, streamErr.Error())
+				if sleepErr := sleepCtx(ctx, wait); sleepErr != nil {
 					return
 				}
 			}
@@ -305,74 +351,137 @@ func (m *Manager) downloadMultipartRange(ctx context.Context, id, downloadUrl, d
 	return nil
 }
 
+// downloadSingleStream downloads without ranges, or with a single resuming
+// range when the server allows it. Each pass appends what it can; a failure only
+// costs a backoff before the next pass picks up from the current file size.
 func (m *Manager) downloadSingleStream(ctx context.Context, id, downloadUrl, dest, partFile string, totalBytes int64) error {
-	var existingBytes int64 = 0
-	if fi, err := os.Stat(partFile); err == nil {
-		existingBytes = fi.Size()
+	notify := m.notifyRetry(id)
+	attempt := 0
+
+	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		var existingBytes int64
+		if fi, err := os.Stat(partFile); err == nil {
+			existingBytes = fi.Size()
+		}
+
+		resp, err := doWithRetry(ctx, maxRetryAttempts, func() (*http.Request, error) {
+			req, reqErr := mediaRequest(ctx, "GET", downloadUrl)
+			if reqErr != nil {
+				return nil, reqErr
+			}
+			if existingBytes > 0 {
+				req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingBytes))
+			}
+			return req, nil
+		}, notify)
+		if err != nil {
+			return err
+		}
+
+		// Only transient failures belong in this loop: a status the retry helper
+		// already refused to retry is permanent and ends the download.
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			resp.Body.Close()
+			return fmt.Errorf("HTTP error: %s", resp.Status)
+		}
+
+		written, discovered, streamErr := m.streamToPartFile(ctx, id, resp, partFile, existingBytes, totalBytes)
+		totalBytes = discovered
+
+		if streamErr == nil {
+			break
+		}
+		if !retryableError(ctx, streamErr) {
+			return streamErr
+		}
+
+		// Bytes landed, so the connection was healthy for a while and the budget
+		// starts over; a loop that makes no progress still ends.
+		if written > 0 {
+			attempt = 0
+		}
+		attempt++
+		if attempt > maxRetryAttempts {
+			return fmt.Errorf("%d denemeden sonra vazgeçildi: %w", maxRetryAttempts, streamErr)
+		}
+
+		wait := retryDelay(attempt, "")
+		notify(attempt, wait, streamErr.Error())
+		if err := sleepCtx(ctx, wait); err != nil {
+			return err
+		}
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadUrl, nil)
-	if err != nil {
-		return fmt.Errorf("request creation failed: %w", err)
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
-	if parsedUrl, err := url.Parse(downloadUrl); err == nil {
-		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
-		req.Header.Set("Referer", origin+"/")
-		req.Header.Set("Origin", origin)
+	if err := os.Rename(partFile, dest); err != nil {
+		return fmt.Errorf("failed to finalize file: %w", err)
 	}
 
-	if existingBytes > 0 {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existingBytes))
-	}
+	return nil
+}
 
-	resp, err := defaultClient.Do(req)
-	if err != nil {
-		return err
-	}
+// streamToPartFile consumes one response into the .part file, reporting progress
+// as it goes. It returns the bytes written by this pass, the best known total
+// size, and the error that ended the pass (nil when the file is complete).
+func (m *Manager) streamToPartFile(
+	ctx context.Context,
+	id string,
+	resp *http.Response,
+	partFile string,
+	existingBytes int64,
+	totalBytes int64,
+) (int64, int64, error) {
 	defer resp.Body.Close()
 
 	var file *os.File
-	var currentDownloaded int64 = 0
+	var err error
+	var currentDownloaded int64
 
-	if resp.StatusCode == http.StatusPartialContent {
-		file, err = os.OpenFile(partFile, os.O_WRONLY|os.O_APPEND, 0644)
+	switch {
+	case resp.StatusCode == http.StatusPartialContent:
+		file, err = os.OpenFile(partFile, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0644)
 		if err != nil {
-			return fmt.Errorf("failed to open partial file: %w", err)
+			return 0, totalBytes, fmt.Errorf("failed to open partial file: %w", err)
 		}
 		currentDownloaded = existingBytes
 		if resp.ContentLength > 0 {
 			totalBytes = existingBytes + resp.ContentLength
 		}
-	} else if resp.StatusCode == http.StatusOK {
+	case resp.StatusCode == http.StatusOK:
+		// No range support: the server restarts the file, so we do too.
 		file, err = os.OpenFile(partFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
-			return fmt.Errorf("failed to create file: %w", err)
+			return 0, totalBytes, fmt.Errorf("failed to create file: %w", err)
 		}
 		currentDownloaded = 0
 		totalBytes = resp.ContentLength
-	} else {
-		return fmt.Errorf("HTTP error: %s", resp.Status)
+	default:
+		return 0, totalBytes, fmt.Errorf("HTTP error: %s", resp.Status)
 	}
 	defer file.Close()
 
 	buf := make([]byte, 256*1024)
 	lastReportTime := time.Now()
 	lastReportBytes := currentDownloaded
+	var written int64
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return written, totalBytes, ctx.Err()
 		default:
 		}
 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, writeErr := file.Write(buf[:n]); writeErr != nil {
-				return fmt.Errorf("write error: %w", writeErr)
+				return written, totalBytes, fmt.Errorf("write error: %w", writeErr)
 			}
 			currentDownloaded += int64(n)
+			written += int64(n)
 		}
 
 		now := time.Now()
@@ -427,17 +536,15 @@ func (m *Manager) downloadSingleStream(ctx context.Context, id, downloadUrl, des
 		}
 
 		if readErr != nil {
-			if readErr == io.EOF {
-				break
+			if readErr != io.EOF {
+				return written, totalBytes, readErr
 			}
-			return readErr
+			// A body that ends short of the announced size was truncated, so the
+			// caller resumes rather than renaming an incomplete file.
+			if totalBytes > 0 && currentDownloaded < totalBytes {
+				return written, totalBytes, fmt.Errorf("stream ended early at %d/%d bytes", currentDownloaded, totalBytes)
+			}
+			return written, totalBytes, nil
 		}
 	}
-
-	_ = file.Close()
-	if err := os.Rename(partFile, dest); err != nil {
-		return fmt.Errorf("failed to finalize file: %w", err)
-	}
-
-	return nil
 }

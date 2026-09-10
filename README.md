@@ -23,7 +23,7 @@ A Chrome extension sniffs media requests on the pages you visit and hands them t
 ## Download
 
 Prebuilt builds for every tagged release are on the
-[Releases page](https://github.com/virtueer/xdm/releases/latest):
+[Releases page](https://github.com/virtueer/vdm/releases/latest):
 
 | Platform | File | Notes |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ winget install Gyan.FFmpeg
 
 ### 1. Desktop app
 
-Grab a build from the [Releases page](https://github.com/virtueer/xdm/releases/latest), or build
+Grab a build from the [Releases page](https://github.com/virtueer/vdm/releases/latest), or build
 from source:
 
 ```bash

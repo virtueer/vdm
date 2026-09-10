@@ -154,41 +154,19 @@ func resolveURL(base *url.URL, ref string) string {
 	return base.ResolveReference(refURL).String()
 }
 
+// fetchHLSContent reads a playlist, retrying rate limits and transport blips
+// with the shared exponential backoff.
 func fetchHLSContent(ctx context.Context, targetURL string) (string, *url.URL, error) {
 	var lastErr error
-	for attempt := 0; attempt < 6; attempt++ {
-		select {
-		case <-ctx.Done():
-			return "", nil, ctx.Err()
-		default:
-		}
 
-		req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+	for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+		resp, err := doWithRetry(ctx, maxRetryAttempts, func() (*http.Request, error) {
+			return mediaRequest(ctx, "GET", targetURL)
+		}, func(a int, wait time.Duration, reason string) {
+			log.Printf("[HLS fetch] %s on %s, retrying in %v (%d/%d)", reason, targetURL, wait, a, maxRetryAttempts)
+		})
 		if err != nil {
 			return "", nil, err
-		}
-		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
-		req.Header.Set("Accept", "*/*")
-		if parsedUrl, err := url.Parse(targetURL); err == nil {
-			origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
-			req.Header.Set("Referer", origin+"/")
-			req.Header.Set("Origin", origin)
-		}
-
-		resp, err := defaultClient.Do(req)
-		if err != nil {
-			lastErr = err
-			time.Sleep(time.Duration(1000*(attempt+1)) * time.Millisecond)
-			continue
-		}
-
-		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
-			resp.Body.Close()
-			lastErr = fmt.Errorf("HLS request rate limited (status: %s)", resp.Status)
-			backoff := time.Duration(1500+attempt*1500) * time.Millisecond
-			log.Printf("[HLS fetch] Rate limited on %s, waiting %v before retry %d...", targetURL, backoff, attempt+1)
-			time.Sleep(backoff)
-			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
@@ -196,21 +174,35 @@ func fetchHLSContent(ctx context.Context, targetURL string) (string, *url.URL, e
 			return "", nil, fmt.Errorf("HLS request failed with status: %s", resp.Status)
 		}
 
-		body, err := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		requestURL := resp.Request.URL
 		resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			time.Sleep(500 * time.Millisecond)
-			continue
+
+		if readErr == nil {
+			return string(body), requestURL, nil
+		}
+		if !retryableError(ctx, readErr) {
+			return "", nil, readErr
 		}
 
-		return string(body), resp.Request.URL, nil
+		lastErr = readErr
+		if attempt == maxRetryAttempts {
+			break
+		}
+		wait := retryDelay(attempt, "")
+		log.Printf("[HLS fetch] playlist body failed on %s, retrying in %v (%d/%d): %v", targetURL, wait, attempt, maxRetryAttempts, readErr)
+		if err := sleepCtx(ctx, wait); err != nil {
+			return "", nil, err
+		}
 	}
-	return "", nil, fmt.Errorf("failed after retries: %w", lastErr)
+
+	return "", nil, fmt.Errorf("playlist alınamadı: %w", lastErr)
 }
 
 func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err error) {
 	log.Printf("[HLS %s] Starting HLS download for %s -> %s", id, rawURL, dest)
+	notify := m.notifyRetry(id)
+
 	content, actualURL, err := fetchHLSContent(ctx, rawURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch playlist: %w", err)
@@ -385,7 +377,7 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 		videoInitName = "init" + ext
 		initPath := filepath.Join(tempDir, "video", videoInitName)
 		log.Printf("[HLS %s] Downloading video init segment: %s -> %s", id, videoPL.InitSegment, initPath)
-		if _, dlErr := downloadSegmentToFile(ctx, videoPL.InitSegment, initPath); dlErr != nil {
+		if _, dlErr := downloadSegmentToFile(ctx, videoPL.InitSegment, initPath, notify); dlErr != nil {
 			log.Printf("[HLS %s] Warning: failed to download video init segment: %v", id, dlErr)
 			videoInitName = ""
 		}
@@ -400,7 +392,7 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 		audioInitName = "init" + ext
 		initPath := filepath.Join(tempDir, "audio", audioInitName)
 		log.Printf("[HLS %s] Downloading audio init segment: %s -> %s", id, audioPL.InitSegment, initPath)
-		if _, dlErr := downloadSegmentToFile(ctx, audioPL.InitSegment, initPath); dlErr != nil {
+		if _, dlErr := downloadSegmentToFile(ctx, audioPL.InitSegment, initPath, notify); dlErr != nil {
 			log.Printf("[HLS %s] Warning: failed to download audio init segment: %v", id, dlErr)
 			audioInitName = ""
 		}
@@ -462,22 +454,25 @@ func (m *Manager) downloadHLS(ctx context.Context, id, rawURL, dest string) (err
 
 					var segBytes int64
 					var dlErr error
-					for attempt := 0; attempt < 20; attempt++ {
-						select {
-						case <-ctx.Done():
+					// downloadSegmentToFile already retries the request itself;
+					// these passes cover write and body failures.
+					for attempt := 1; attempt <= maxRetryAttempts; attempt++ {
+						if ctx.Err() != nil {
 							return
-						default:
 						}
 
-						segBytes, dlErr = downloadSegmentToFile(ctx, j.url, segPath)
+						segBytes, dlErr = downloadSegmentToFile(ctx, j.url, segPath, notify)
 						if dlErr == nil {
 							break
 						}
+						if !retryableError(ctx, dlErr) || attempt == maxRetryAttempts {
+							break
+						}
 
-						if strings.Contains(dlErr.Error(), "rate limited") || strings.Contains(dlErr.Error(), "429") {
-							time.Sleep(time.Duration(2000+attempt*1000) * time.Millisecond)
-						} else {
-							time.Sleep(time.Duration(500*(attempt+1)) * time.Millisecond)
+						wait := retryDelay(attempt, "")
+						notify(attempt, wait, dlErr.Error())
+						if sleepErr := sleepCtx(ctx, wait); sleepErr != nil {
+							return
 						}
 					}
 
@@ -781,31 +776,26 @@ func writeConcatFile(tempDir, subFolder string, filenames []string, listPath str
 	return nil
 }
 
-func downloadSegmentToFile(ctx context.Context, segURL, outPath string) (int64, error) {
-	reqCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(reqCtx, "GET", segURL, nil)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36")
-	req.Header.Set("Accept", "*/*")
-	if parsedUrl, err := url.Parse(segURL); err == nil {
-		origin := fmt.Sprintf("%s://%s", parsedUrl.Scheme, parsedUrl.Host)
-		req.Header.Set("Referer", origin+"/")
-		req.Header.Set("Origin", origin)
-	}
-
-	resp, err := defaultClient.Do(req)
+// downloadSegmentToFile fetches one segment. Rate limits and transport blips are
+// retried here with the shared exponential backoff; the caller only sees an error
+// once the budget is spent.
+func downloadSegmentToFile(ctx context.Context, segURL, outPath string, notify retryNotifier) (int64, error) {
+	resp, err := doWithRetry(ctx, maxRetryAttempts, func() (*http.Request, error) {
+		reqCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+		req, reqErr := mediaRequest(reqCtx, "GET", segURL)
+		if reqErr != nil {
+			cancel()
+			return nil, reqErr
+		}
+		// The timeout guards this attempt; the body is read before it fires.
+		context.AfterFunc(req.Context(), cancel)
+		return req, nil
+	}, notify)
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
-		return 0, fmt.Errorf("rate limited: %s", resp.Status)
-	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return 0, fmt.Errorf("bad status %s", resp.Status)
 	}

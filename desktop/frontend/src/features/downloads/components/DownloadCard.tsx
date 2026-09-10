@@ -235,7 +235,9 @@ export const DownloadCard = React.memo<DownloadCardProps>(
                   {item.downloadedSize || '0 B'}
                   {item.totalSize ? ` / ${item.totalSize}` : ''}
                 </span>
-                {isQueued && item.statusMsg && <span className="truncate">{item.statusMsg}</span>}
+                {(isQueued || isDownloading) && item.statusMsg && (
+                  <span className="truncate">{item.statusMsg}</span>
+                )}
 
                 <span className="ml-auto flex shrink-0 items-center gap-3">
                   {isDownloading && (
